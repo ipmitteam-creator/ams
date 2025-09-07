@@ -1,10 +1,13 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Response
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import base64
 from datetime import date, datetime
+import base64
+import io
+import csv
+import pandas as pd
 
 app = FastAPI()
 
@@ -16,8 +19,8 @@ class Sewadar(BaseModel):
     alternate_contact_no: Optional[str] = None
     address: Optional[str] = None
     gender: Optional[str] = None
-    dob: Optional[str] = None   # YYYY-MM-DD
-    department_name: Optional[str] = None   # <-- instead of department_id
+    dob: Optional[str] = None
+    department_name: Optional[str] = None
     enrolment_date: Optional[str] = None
     blood_group: Optional[str] = None
     locality: Optional[str] = None
@@ -28,8 +31,8 @@ class Sewadar(BaseModel):
     visit_badge_no: Optional[str] = None
     education: Optional[str] = None
     occupation: Optional[str] = None
-    photo: Optional[str] = None          # base64 encoded string
-    aadhaar_photo: Optional[str] = None  # base64 encoded string
+    photo: Optional[str] = None
+    aadhaar_photo: Optional[str] = None
     aadhaar_no: Optional[str] = None
     category: Optional[str] = None
 
@@ -44,7 +47,7 @@ def get_db_connection():
         sslmode="require"
     )
 
-# ---------------- Utility: Age Calculation ----------------
+# ---------------- Utilities ----------------
 def calculate_age(dob_str: Optional[str]) -> Optional[int]:
     if not dob_str:
         return None
@@ -55,7 +58,6 @@ def calculate_age(dob_str: Optional[str]) -> Optional[int]:
     except ValueError:
         return None
 
-# ---------------- Utility: Department Lookup ----------------
 def get_department_id(conn, department_name: Optional[str]) -> Optional[int]:
     if not department_name:
         return None
@@ -63,111 +65,106 @@ def get_department_id(conn, department_name: Optional[str]) -> Optional[int]:
     cur.execute("SELECT department_id FROM department WHERE department_name = %s", (department_name,))
     row = cur.fetchone()
     cur.close()
-    if row:
-        return row[0]
-    return None
+    return row[0] if row else None
 
-# ---------------- Add Sewadar ----------------
-@app.post("/sewadar")
-def add_sewadar(sewadar: Sewadar):
+def get_department_name(conn, department_id: Optional[int]) -> Optional[str]:
+    if not department_id:
+        return None
+    cur = conn.cursor()
+    cur.execute("SELECT department_name FROM department WHERE department_id = %s", (department_id,))
+    row = cur.fetchone()
+    cur.close()
+    return row[0] if row else None
+
+# ---------------- Get Sewadar by badge_no ----------------
+@app.get("/sewadar/{badge_no}")
+def get_sewadar(badge_no: str):
     conn = get_db_connection()
-    cursor = conn.cursor()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-    # Resolve department_id
-    department_id = get_department_id(conn, sewadar.department_name)
-    if sewadar.department_name and not department_id:
-        conn.close()
-        raise HTTPException(status_code=404, detail=f"Department '{sewadar.department_name}' not found")
-
-    sql = """
-        INSERT INTO sewadar (
-            name, father_husband_name, contact_no, alternate_contact_no,
-            address, gender, dob, department_id, enrolment_date, blood_group,
-            locality, badge_no, badge_category, badge_issue_date,
-            initiation_date, visit_badge_no, education, occupation,
-            photo, aadhaar_photo, aadhaar_no, category, age
-        )
-        VALUES (
-            %(name)s, %(father_husband_name)s, %(contact_no)s, %(alternate_contact_no)s,
-            %(address)s, %(gender)s, %(dob)s, %(department_id)s, %(enrolment_date)s, %(blood_group)s,
-            %(locality)s, %(badge_no)s, %(badge_category)s, %(badge_issue_date)s,
-            %(initiation_date)s, %(visit_badge_no)s, %(education)s, %(occupation)s,
-            %(photo)s, %(aadhaar_photo)s, %(aadhaar_no)s, %(category)s, %(age)s
-        )
-        ON CONFLICT (badge_no) DO NOTHING
-    """
-
-    data = sewadar.dict()
-    data["department_id"] = department_id
-    data["age"] = calculate_age(data["dob"])
-    if data["photo"]:
-        data["photo"] = base64.b64decode(data["photo"])
-    if data["aadhaar_photo"]:
-        data["aadhaar_photo"] = base64.b64decode(data["aadhaar_photo"])
-
-    cursor.execute(sql, data)
-    conn.commit()
-
-    cursor.close()
-    conn.close()
-    return {"message": f"Sewadar {sewadar.name} added successfully"}
-
-# ---------------- Update Sewadar ----------------
-@app.put("/sewadar/{badge_no}")
-def update_sewadar(badge_no: str, sewadar: Sewadar):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Resolve department_id
-    department_id = get_department_id(conn, sewadar.department_name)
-    if sewadar.department_name and not department_id:
-        conn.close()
-        raise HTTPException(status_code=404, detail=f"Department '{sewadar.department_name}' not found")
-
-    sql = """
-        UPDATE sewadar SET
-            name = %(name)s,
-            father_husband_name = %(father_husband_name)s,
-            contact_no = %(contact_no)s,
-            alternate_contact_no = %(alternate_contact_no)s,
-            address = %(address)s,
-            gender = %(gender)s,
-            dob = %(dob)s,
-            department_id = %(department_id)s,
-            enrolment_date = %(enrolment_date)s,
-            blood_group = %(blood_group)s,
-            locality = %(locality)s,
-            badge_category = %(badge_category)s,
-            badge_issue_date = %(badge_issue_date)s,
-            initiation_date = %(initiation_date)s,
-            visit_badge_no = %(visit_badge_no)s,
-            education = %(education)s,
-            occupation = %(occupation)s,
-            photo = %(photo)s,
-            aadhaar_photo = %(aadhaar_photo)s,
-            aadhaar_no = %(aadhaar_no)s,
-            category = %(category)s,
-            age = %(age)s
-        WHERE badge_no = %(badge_no)s
-    """
-
-    data = sewadar.dict()
-    data["department_id"] = department_id
-    data["badge_no"] = badge_no
-    data["age"] = calculate_age(data["dob"])
-    if data["photo"]:
-        data["photo"] = base64.b64decode(data["photo"])
-    if data["aadhaar_photo"]:
-        data["aadhaar_photo"] = base64.b64decode(data["aadhaar_photo"])
-
-    cursor.execute(sql, data)
-    conn.commit()
-    rows_updated = cursor.rowcount
-
+    cursor.execute("SELECT * FROM sewadar WHERE badge_no = %s", (badge_no,))
+    record = cursor.fetchone()
     cursor.close()
     conn.close()
 
-    if rows_updated == 0:
+    if not record:
         raise HTTPException(status_code=404, detail="Sewadar not found")
 
-    return {"message": f"Sewadar {badge_no} updated successfully"}
+    # Replace department_id with department_name
+    record["department_name"] = get_department_name(get_db_connection(), record.get("department_id"))
+    record.pop("department_id", None)
+
+    return record
+
+# ---------------- Search / Report API ----------------
+@app.get("/sewadars")
+def search_sewadars(
+    department_name: Optional[str] = Query(None),
+    locality: Optional[str] = Query(None),
+    gender: Optional[str] = Query(None),
+    age: Optional[int] = Query(None),
+    format: Optional[str] = Query("json")  # json, csv, xlsx
+):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    # Build filters dynamically
+    conditions, values = [], []
+    if department_name:
+        dept_id = get_department_id(conn, department_name)
+        if not dept_id:
+            conn.close()
+            raise HTTPException(status_code=404, detail=f"Department '{department_name}' not found")
+        conditions.append("department_id = %s")
+        values.append(dept_id)
+    if locality:
+        conditions.append("locality ILIKE %s")
+        values.append(f"%{locality}%")
+    if gender:
+        conditions.append("gender = %s")
+        values.append(gender)
+    if age is not None:
+        today = date.today()
+        dob_cutoff = today.replace(year=today.year - age)  # approximate age filter
+        conditions.append("dob <= %s")
+        values.append(dob_cutoff)
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    query = f"SELECT * FROM sewadar {where_clause}"
+    cursor.execute(query, tuple(values))
+    records = cursor.fetchall()
+
+    # Replace department_id with department_name
+    for r in records:
+        r["department_name"] = get_department_name(conn, r.get("department_id"))
+        r.pop("department_id", None)
+
+    cursor.close()
+    conn.close()
+
+    # Export in desired format
+    if format == "json":
+        return records
+
+    df = pd.DataFrame(records)
+
+    if format == "csv":
+        output = io.StringIO()
+        df.to_csv(output, index=False)
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=sewadar_report.csv"}
+        )
+
+    if format == "xlsx":
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Sewadars")
+        return Response(
+            content=output.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=sewadar_report.xlsx"}
+        )
+
+    raise HTTPException(status_code=400, detail="Invalid format. Use json, csv, or xlsx.")
