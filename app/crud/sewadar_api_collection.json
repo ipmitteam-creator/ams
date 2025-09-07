@@ -1,0 +1,134 @@
+{
+  "info": {
+    "name": "Sewadar Management APIs",
+    "_postman_id": "f2c3e1d0-1234-5678-9876-abcd1234efgh",
+    "description": "Postman collection for Department and Sewadar APIs hosted on Render",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Add Departments",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "https://ams-04i2.onrender.com/departments",
+          "protocol": "https",
+          "host": ["ams-04i2", "onrender", "com"],
+          "path": ["departments"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"departments\": [\n    { \"name\": \"Satsang\" },\n    { \"name\": \"Langar\" }\n  ]\n}"
+        }
+      }
+    },
+    {
+      "name": "Add Sewadar",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "https://ams-04i2.onrender.com/sewadar",
+          "protocol": "https",
+          "host": ["ams-04i2", "onrender", "com"],
+          "path": ["sewadar"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Ramesh Kumar\",\n  \"badge_no\": \"12345\",\n  \"father_husband_name\": \"Suresh Kumar\",\n  \"gender\": \"Male\",\n  \"dob\": \"1990-01-01\",\n  \"department_name\": \"Satsang\",\n  \"locality\": \"Delhi\",\n  \"education\": \"Graduate\",\n  \"occupation\": \"Engineer\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Get Sewadar by Badge No",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "https://ams-04i2.onrender.com/sewadar/12345",
+          "protocol": "https",
+          "host": ["ams-04i2", "onrender", "com"],
+          "path": ["sewadar", "12345"]
+        }
+      }
+    },
+    {
+      "name": "Update Sewadar",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "https://ams-04i2.onrender.com/sewadar/12345",
+          "protocol": "https",
+          "host": ["ams-04i2", "onrender", "com"],
+          "path": ["sewadar", "12345"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Ramesh Kumar Updated\",\n  \"badge_no\": \"12345\",\n  \"gender\": \"Male\",\n  \"dob\": \"1990-01-01\",\n  \"department_name\": \"Langar\",\n  \"locality\": \"Amritsar\",\n  \"education\": \"Post Graduate\",\n  \"occupation\": \"Manager\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Search Sewadars (JSON)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "https://ams-04i2.onrender.com/sewadars?department_name=Satsang&locality=Delhi&format=json",
+          "protocol": "https",
+          "host": ["ams-04i2", "onrender", "com"],
+          "path": ["sewadars"],
+          "query": [
+            { "key": "department_name", "value": "Satsang" },
+            { "key": "locality", "value": "Delhi" },
+            { "key": "format", "value": "json" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Search Sewadars (CSV)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "https://ams-04i2.onrender.com/sewadars?department_name=Satsang&format=csv",
+          "protocol": "https",
+          "host": ["ams-04i2", "onrender", "com"],
+          "path": ["sewadars"],
+          "query": [
+            { "key": "department_name", "value": "Satsang" },
+            { "key": "format", "value": "csv" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Search Sewadars (XLSX)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "https://ams-04i2.onrender.com/sewadars?locality=Delhi&format=xlsx",
+          "protocol": "https",
+          "host": ["ams-04i2", "onrender", "com"],
+          "path": ["sewadars"],
+          "query": [
+            { "key": "locality", "value": "Delhi" },
+            { "key": "format", "value": "xlsx" }
+          ]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://ams-04i2.onrender.com"
+    }
+  ]
+}
