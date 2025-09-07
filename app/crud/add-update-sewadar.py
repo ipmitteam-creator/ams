@@ -56,25 +56,39 @@ def calculate_age(dob_str: Optional[str]) -> Optional[int]:
         today = date.today()
         return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
     except ValueError:
+        print(f"[WARN] Invalid DOB format received: {dob_str}")
         return None
 
 def get_department_id(conn, department_name: Optional[str]) -> Optional[int]:
+    """Fetch department_id case-insensitive by name."""
     if not department_name:
         return None
     cur = conn.cursor()
-    cur.execute("SELECT department_id FROM department WHERE department_name = %s", (department_name,))
+    cur.execute(
+        "SELECT department_id FROM department WHERE LOWER(TRIM(department_name)) = LOWER(TRIM(%s))",
+        (department_name,)
+    )
     row = cur.fetchone()
     cur.close()
-    return row[0] if row else None
+    if row:
+        print(f"[INFO] Found department_id {row[0]} for department_name '{department_name}'")
+        return row[0]
+    else:
+        print(f"[WARN] Department '{department_name}' not found in DB")
+        return None
 
 def get_department_name(conn, department_id: Optional[int]) -> Optional[str]:
+    """Fetch department_name by id."""
     if not department_id:
         return None
     cur = conn.cursor()
     cur.execute("SELECT department_name FROM department WHERE department_id = %s", (department_id,))
     row = cur.fetchone()
     cur.close()
-    return row[0] if row else None
+    if row:
+        return row[0]
+    print(f"[WARN] No department_name found for department_id {department_id}")
+    return None
 
 # ---------------- Get Sewadar by badge_no ----------------
 @app.get("/sewadar/{badge_no}")
@@ -82,12 +96,14 @@ def get_sewadar(badge_no: str):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
+    print(f"[INFO] Fetching sewadar with badge_no={badge_no}")
     cursor.execute("SELECT * FROM sewadar WHERE badge_no = %s", (badge_no,))
     record = cursor.fetchone()
     cursor.close()
     conn.close()
 
     if not record:
+        print(f"[ERROR] Sewadar with badge_no={badge_no} not found")
         raise HTTPException(status_code=404, detail="Sewadar not found")
 
     # Replace department_id with department_name
@@ -108,15 +124,19 @@ def search_sewadars(
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
+    print(f"[INFO] Search params received: department_name={department_name}, locality={locality}, gender={gender}, age={age}, format={format}")
+
     # Build filters dynamically
     conditions, values = [], []
     if department_name:
         dept_id = get_department_id(conn, department_name)
-        if not dept_id:
+        if dept_id:
+            conditions.append("department_id = %s")
+            values.append(dept_id)
+        else:
+            print(f"[WARN] Returning empty result as department '{department_name}' does not exist")
             conn.close()
-            raise HTTPException(status_code=404, detail=f"Department '{department_name}' not found")
-        conditions.append("department_id = %s")
-        values.append(dept_id)
+            return []  # graceful fallback
     if locality:
         conditions.append("locality ILIKE %s")
         values.append(f"%{locality}%")
@@ -131,6 +151,7 @@ def search_sewadars(
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM sewadar {where_clause}"
+    print(f"[DEBUG] Executing query: {query} with values {values}")
     cursor.execute(query, tuple(values))
     records = cursor.fetchall()
 
@@ -142,6 +163,8 @@ def search_sewadars(
     cursor.close()
     conn.close()
 
+    print(f"[INFO] Found {len(records)} records matching filters")
+
     # Export in desired format
     if format == "json":
         return records
@@ -149,6 +172,7 @@ def search_sewadars(
     df = pd.DataFrame(records)
 
     if format == "csv":
+        print("[INFO] Generating CSV report")
         output = io.StringIO()
         df.to_csv(output, index=False)
         return Response(
@@ -158,6 +182,7 @@ def search_sewadars(
         )
 
     if format == "xlsx":
+        print("[INFO] Generating XLSX report")
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Sewadars")
@@ -167,4 +192,5 @@ def search_sewadars(
             headers={"Content-Disposition": "attachment; filename=sewadar_report.xlsx"}
         )
 
+    print(f"[ERROR] Invalid format requested: {format}")
     raise HTTPException(status_code=400, detail="Invalid format. Use json, csv, or xlsx.")
