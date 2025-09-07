@@ -28,7 +28,7 @@ def get_db_connection():
     )
 
 # ---------------- Add Departments ----------------
-@router.post("/departments")
+@router.post("/")
 def add_departments(data: DepartmentList):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -44,7 +44,7 @@ def add_departments(data: DepartmentList):
     return {"message": f"{len(data.departments)} departments processed successfully"}
 
 # ---------------- Update Department ----------------
-@router.put("/departments/{department_id}")
+@router.put("/{department_id}")
 def update_department(department_id: int, dept: DepartmentUpdate):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -65,7 +65,7 @@ def update_department(department_id: int, dept: DepartmentUpdate):
     return {"message": f"Department {department_id} updated successfully"}
 
 # ---------------- Fetch All Departments ----------------
-@router.get("/departments")
+@router.get("/")
 def get_all_departments():
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)

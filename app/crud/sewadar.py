@@ -84,7 +84,7 @@ def calculate_age_from_dob(dob_str: Optional[str]) -> Optional[int]:
         return None
 
 # ---------------- Add Sewadar ----------------
-@router.post("/sewadar")
+@router.post("/")
 def add_sewadar(sewadar: Sewadar):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -125,7 +125,7 @@ def add_sewadar(sewadar: Sewadar):
     return {"message": f"Sewadar {sewadar.name} added successfully"}
 
 # ---------------- Get Sewadar by badge_no ----------------
-@router.get("/sewadar/{badge_no}")
+@router.get("/{badge_no}")
 def get_sewadar(badge_no: str):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -146,7 +146,7 @@ def get_sewadar(badge_no: str):
     return record
 
 # ---------------- Search / Report Sewadars ----------------
-@router.get("/sewadars")
+@router.get("/")
 def search_sewadars(
     department_name: Optional[str] = Query(None),
     locality: Optional[str] = Query(None),
