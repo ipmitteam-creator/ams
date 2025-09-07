@@ -1,14 +1,19 @@
 # main.py
 from fastapi import FastAPI
-from app.crud import sewadar, department
+from app.crud.sewadar import router as sewadar_router
+from app.crud.department import router as department_router
 
-app = FastAPI(title="AMS Sewadar Management API", version="1.0")
+app = FastAPI(
+    title="AMS API",
+    description="API for managing Sewadars and Departments",
+    version="1.0.0"
+)
 
-# Include routers from modules
-app.include_router(sewadar.router, prefix="", tags=["Sewadar"])
-app.include_router(department.router, prefix="", tags=["Department"])
+# ---------------- Include Routers ----------------
+app.include_router(sewadar_router, prefix="/sewadar", tags=["Sewadar"])
+app.include_router(department_router, prefix="/department", tags=["Department"])
 
-# Optional root endpoint
+# ---------------- Root Endpoint ----------------
 @app.get("/")
 def root():
-    return {"message": "Welcome to AMS Sewadar Management API"}
+    return {"message": "Welcome to AMS API. Visit /docs for API documentation."}
