@@ -1,12 +1,10 @@
 from fastapi import FastAPI, HTTPException, Query, Response
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from datetime import date, datetime
-import base64
 import io
-import csv
 import pandas as pd
 
 app = FastAPI()
@@ -48,19 +46,7 @@ def get_db_connection():
     )
 
 # ---------------- Utilities ----------------
-def calculate_age(dob_str: Optional[str]) -> Optional[int]:
-    if not dob_str:
-        return None
-    try:
-        dob = datetime.strptime(dob_str, "%Y-%m-%d").date()
-        today = date.today()
-        return today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
-    except ValueError:
-        print(f"[WARN] Invalid DOB format received: {dob_str}")
-        return None
-
 def get_department_id(conn, department_name: Optional[str]) -> Optional[int]:
-    """Fetch department_id case-insensitive by name."""
     if not department_name:
         return None
     cur = conn.cursor()
@@ -78,17 +64,13 @@ def get_department_id(conn, department_name: Optional[str]) -> Optional[int]:
         return None
 
 def get_department_name(conn, department_id: Optional[int]) -> Optional[str]:
-    """Fetch department_name by id."""
     if not department_id:
         return None
     cur = conn.cursor()
     cur.execute("SELECT department_name FROM department WHERE department_id = %s", (department_id,))
     row = cur.fetchone()
     cur.close()
-    if row:
-        return row[0]
-    print(f"[WARN] No department_name found for department_id {department_id}")
-    return None
+    return row[0] if row else None
 
 # ---------------- Get Sewadar by badge_no ----------------
 @app.get("/sewadar/{badge_no}")
@@ -106,7 +88,6 @@ def get_sewadar(badge_no: str):
         print(f"[ERROR] Sewadar with badge_no={badge_no} not found")
         raise HTTPException(status_code=404, detail="Sewadar not found")
 
-    # Replace department_id with department_name
     record["department_name"] = get_department_name(get_db_connection(), record.get("department_id"))
     record.pop("department_id", None)
 
@@ -118,39 +99,59 @@ def search_sewadars(
     department_name: Optional[str] = Query(None),
     locality: Optional[str] = Query(None),
     gender: Optional[str] = Query(None),
+    badge_no: Optional[str] = Query(None),
+    badge_category: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
     age: Optional[int] = Query(None),
     format: Optional[str] = Query("json")  # json, csv, xlsx
 ):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-    print(f"[INFO] Search params received: department_name={department_name}, locality={locality}, gender={gender}, age={age}, format={format}")
+    print(f"[INFO] Search params: dept={department_name}, locality={locality}, gender={gender}, badge_no={badge_no}, badge_cat={badge_category}, category={category}, age={age}, format={format}")
 
     # Build filters dynamically
     conditions, values = [], []
+
     if department_name:
         dept_id = get_department_id(conn, department_name)
         if dept_id:
             conditions.append("department_id = %s")
             values.append(dept_id)
         else:
-            print(f"[WARN] Returning empty result as department '{department_name}' does not exist")
             conn.close()
-            return []  # graceful fallback
+            print(f"[WARN] Department '{department_name}' not found, returning empty result")
+            return []
+
     if locality:
         conditions.append("locality ILIKE %s")
         values.append(f"%{locality}%")
+
     if gender:
         conditions.append("gender = %s")
         values.append(gender)
+
+    if badge_no:
+        conditions.append("badge_no = %s")
+        values.append(badge_no)
+
+    if badge_category:
+        conditions.append("badge_category = %s")
+        values.append(badge_category)
+
+    if category:
+        conditions.append("category = %s")
+        values.append(category)
+
     if age is not None:
         today = date.today()
-        dob_cutoff = today.replace(year=today.year - age)  # approximate age filter
+        dob_cutoff = today.replace(year=today.year - age)
         conditions.append("dob <= %s")
         values.append(dob_cutoff)
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM sewadar {where_clause}"
+
     print(f"[DEBUG] Executing query: {query} with values {values}")
     cursor.execute(query, tuple(values))
     records = cursor.fetchall()
@@ -163,7 +164,7 @@ def search_sewadars(
     cursor.close()
     conn.close()
 
-    print(f"[INFO] Found {len(records)} records matching filters")
+    print(f"[INFO] Found {len(records)} records")
 
     # Export in desired format
     if format == "json":
@@ -172,7 +173,7 @@ def search_sewadars(
     df = pd.DataFrame(records)
 
     if format == "csv":
-        print("[INFO] Generating CSV report")
+        print("[INFO] Returning CSV export")
         output = io.StringIO()
         df.to_csv(output, index=False)
         return Response(
@@ -182,7 +183,7 @@ def search_sewadars(
         )
 
     if format == "xlsx":
-        print("[INFO] Generating XLSX report")
+        print("[INFO] Returning XLSX export")
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Sewadars")
