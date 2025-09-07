@@ -1,1 +1,1 @@
-from app.crud.add-update-sewadar import app
+from app.crud.add_update_sewadar import app
