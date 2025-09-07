@@ -60,9 +60,8 @@ def get_department_id(conn, department_name: Optional[str]) -> Optional[int]:
     if row:
         print(f"[INFO] Found department_id {row[0]} for department_name '{department_name}'")
         return row[0]
-    else:
-        print(f"[WARN] Department '{department_name}' not found in DB")
-        return None
+    print(f"[WARN] Department '{department_name}' not found in DB")
+    return None
 
 def get_department_name(conn, department_id: Optional[int]) -> Optional[str]:
     if not department_id:
@@ -84,7 +83,7 @@ def calculate_age_from_dob(dob_str: Optional[str]) -> Optional[int]:
         print(f"[WARN] Invalid DOB format: {dob_str}")
         return None
 
-# ---------------- Add Sewadar API ----------------
+# ---------------- Add Sewadar ----------------
 @router.post("/sewadar")
 def add_sewadar(sewadar: Sewadar):
     conn = get_db_connection()
@@ -125,5 +124,126 @@ def add_sewadar(sewadar: Sewadar):
     print(f"[INFO] Sewadar {sewadar.name} added successfully with badge_no={sewadar.badge_no}")
     return {"message": f"Sewadar {sewadar.name} added successfully"}
 
-# ---------------- Get Sewadar by badge_no and search_sewadars remain unchanged ----------------
-# (Paste the previously refactored get_sewadar and search_sewadars functions here)
+# ---------------- Get Sewadar by badge_no ----------------
+@router.get("/sewadar/{badge_no}")
+def get_sewadar(badge_no: str):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    print(f"[INFO] Fetching sewadar with badge_no={badge_no}")
+    cursor.execute("SELECT * FROM sewadar WHERE badge_no = %s", (badge_no,))
+    record = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not record:
+        print(f"[ERROR] Sewadar with badge_no={badge_no} not found")
+        raise HTTPException(status_code=404, detail="Sewadar not found")
+
+    record["department_name"] = get_department_name(get_db_connection(), record.get("department_id"))
+    record.pop("department_id", None)
+
+    return record
+
+# ---------------- Search / Report Sewadars ----------------
+@router.get("/sewadars")
+def search_sewadars(
+    department_name: Optional[str] = Query(None),
+    locality: Optional[str] = Query(None),
+    gender: Optional[str] = Query(None),
+    badge_no: Optional[str] = Query(None),
+    badge_category: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    age: Optional[int] = Query(None),
+    format: Optional[str] = Query("json")
+):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    print(f"[INFO] Search params: dept={department_name}, locality={locality}, gender={gender}, "
+          f"badge_no={badge_no}, badge_cat={badge_category}, category={category}, age={age}, format={format}")
+
+    # Build dynamic filters
+    conditions, values = [], []
+
+    if department_name:
+        dept_id = get_department_id(conn, department_name)
+        if dept_id:
+            conditions.append("department_id = %s")
+            values.append(dept_id)
+        else:
+            conn.close()
+            print(f"[WARN] Department '{department_name}' not found, returning empty result")
+            return []
+
+    if locality:
+        conditions.append("locality ILIKE %s")
+        values.append(f"%{locality}%")
+
+    if gender:
+        conditions.append("gender = %s")
+        values.append(gender)
+
+    if badge_no:
+        conditions.append("badge_no = %s")
+        values.append(badge_no)
+
+    if badge_category:
+        conditions.append("badge_category = %s")
+        values.append(badge_category)
+
+    if category:
+        conditions.append("category = %s")
+        values.append(category)
+
+    if age is not None:
+        today = date.today()
+        dob_cutoff = today.replace(year=today.year - age)
+        conditions.append("dob <= %s")
+        values.append(dob_cutoff)
+
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    query = f"SELECT * FROM sewadar {where_clause}"
+    print(f"[DEBUG] Executing query: {query} with values {values}")
+    cursor.execute(query, tuple(values))
+    records = cursor.fetchall()
+
+    # Replace department_id with department_name
+    for r in records:
+        r["department_name"] = get_department_name(conn, r.get("department_id"))
+        r.pop("department_id", None)
+
+    cursor.close()
+    conn.close()
+
+    print(f"[INFO] Found {len(records)} records")
+
+    # Export in desired format
+    if format == "json":
+        return records
+
+    df = pd.DataFrame(records)
+
+    if format == "csv":
+        print("[INFO] Returning CSV export")
+        output = io.StringIO()
+        df.to_csv(output, index=False)
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=sewadar_report.csv"}
+        )
+
+    if format == "xlsx":
+        print("[INFO] Returning XLSX export")
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Sewadars")
+        return Response(
+            content=output.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=sewadar_report.xlsx"}
+        )
+
+    print(f"[ERROR] Invalid format requested: {format}")
+    raise HTTPException(status_code=400, detail="Invalid format. Use json, csv, or xlsx.")
