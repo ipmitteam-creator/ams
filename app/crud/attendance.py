@@ -53,7 +53,7 @@ def scan_attendance(data: ScanAttendance):
         conn.close()
         raise HTTPException(status_code=404, detail="Badge not found")
 
-    sewadar_id, name, dept_id = row
+    sewadar_id, name, dept_id, dept_name = row
 
     # Insert attendance
     cur.execute(
@@ -76,10 +76,10 @@ def scan_attendance(data: ScanAttendance):
     conn.close()
 
     return {
-        "message": "Attendance recorded",
-        "badge_no": data.badge_no,
-        "name": name,
-        "department_id": dept_id,
-        "check-in_time" : data.check_in_time,
-        "check-out_time" : data.check_out_time
-    }
+    "message": "Attendance recorded",
+    "badge_no": data.badge_no,
+    "name": name,
+    "department_name": dept_name,
+    "check_in_time": data.check_in_time,
+    "check_out_time": data.check_out_time
+}
