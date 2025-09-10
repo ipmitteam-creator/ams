@@ -40,7 +40,12 @@ def scan_attendance(data: ScanAttendance):
 
     # Lookup sewadar_id
     cur.execute(
-        "SELECT sewadar_id, name, department_id FROM sewadar WHERE badge_no = %s",
+        """
+        SELECT s.sewadar_id, s.name, s.department_id, d.department_name
+        FROM sewadar s
+        JOIN department d ON s.department_id = d.id
+        WHERE s.badge_no = %s
+        """,
         (data.badge_no,)
     )
     row = cur.fetchone()
