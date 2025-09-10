@@ -95,7 +95,7 @@ def scan_attendance(data: ScanAttendance):
         # Update existing row with check-out
         cur.execute(
             """
-            SELECT id, check_in_time FROM attendance
+            SELECT attendance_id, check_in_time FROM attendance
             WHERE sewadar_id = %s AND attendance_date = %s AND attendance_type = %s
             """,
             (sewadar_id, today, data.attendance_type)
@@ -112,7 +112,7 @@ def scan_attendance(data: ScanAttendance):
             cur.execute(
                 """
                 SELECT check_out_time FROM attendance
-                WHERE id = %s AND check_out_time IS NOT NULL
+                WHERE attendance_id = %s AND check_out_time IS NOT NULL
                 """,
                 (attendance_id,)
             )
@@ -125,7 +125,7 @@ def scan_attendance(data: ScanAttendance):
             """
             UPDATE attendance
             SET check_out_time = %s
-            WHERE id = %s
+            WHERE attendance_id = %s
             """,
             (data.check_out_time, attendance_id)
         )
