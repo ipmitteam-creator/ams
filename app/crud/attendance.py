@@ -75,4 +75,6 @@ def scan_attendance(data: ScanAttendance):
         "badge_no": data.badge_no,
         "name": name,
         "department_id": dept_id,
+        "check-in_time" : data.check_in_time,
+        "check-out_time" : data.check_out_time
     }
