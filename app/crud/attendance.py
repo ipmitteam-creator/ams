@@ -38,7 +38,7 @@ def scan_attendance(data: ScanAttendance):
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # Lookup sewadar_id
+    # Lookup sewadar_id and department_name
     cur.execute(
         """
         SELECT s.sewadar_id, s.name, s.department_id, d.department_name
@@ -55,7 +55,35 @@ def scan_attendance(data: ScanAttendance):
 
     sewadar_id, name, dept_id, dept_name = row
 
-    # Insert attendance
+    today = date.today()
+
+    # ----------------- Prevent duplicate check-in -----------------
+    if data.check_in_time:
+        cur.execute(
+            """
+            SELECT 1 FROM attendance
+            WHERE sewadar_id = %s AND attendance_date = %s AND attendance_type = %s AND check_in_time IS NOT NULL
+            """,
+            (sewadar_id, today, data.attendance_type)
+        )
+        if cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=400, detail="Check-In already recorded for today")
+
+    # ----------------- Prevent duplicate check-out -----------------
+    if data.check_out_time:
+        cur.execute(
+            """
+            SELECT 1 FROM attendance
+            WHERE sewadar_id = %s AND attendance_date = %s AND attendance_type = %s AND check_out_time IS NOT NULL
+            """,
+            (sewadar_id, today, data.attendance_type)
+        )
+        if cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=400, detail="Check-Out already recorded for today")
+
+    # ----------------- Insert Attendance -----------------
     cur.execute(
         """
         INSERT INTO attendance (
@@ -64,7 +92,7 @@ def scan_attendance(data: ScanAttendance):
         """,
         (
             sewadar_id,
-            date.today(),
+            today,
             data.attendance_type,
             data.check_in_time,
             data.check_out_time,
@@ -76,10 +104,10 @@ def scan_attendance(data: ScanAttendance):
     conn.close()
 
     return {
-    "message": "Attendance recorded",
-    "badge_no": data.badge_no,
-    "name": name,
-    "department_name": dept_name,
-    "check_in_time": data.check_in_time,
-    "check_out_time": data.check_out_time
-}
+        "message": "Attendance recorded",
+        "badge_no": data.badge_no,
+        "name": name,
+        "department_name": dept_name,
+        "check_in_time": data.check_in_time,
+        "check_out_time": data.check_out_time
+    }
