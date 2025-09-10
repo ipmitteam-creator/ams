@@ -1,94 +1,145 @@
-const API_URL = "https://ams-04i2.onrender.com/attendance/scan";
+# app/crud/attendance.py
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from datetime import date
+import psycopg2
 
-/**
- * Triggered whenever a cell is edited in Column A (badge_no).
- */
-function onEdit(e) {
-  try {
-    if (!e || !e.range) return;
+router = APIRouter()
 
-    const sheet = e.range.getSheet();
-    const row = e.range.getRow();
-    const col = e.range.getColumn();
+DB_CONFIG = {
+    "dbname": "ams",
+    "user": "neondb_owner",
+    "password": "npg_igo8fBOT3MtP",
+    "host": "ep-orange-fog-a1qfrxr9-pooler.ap-southeast-1.aws.neon.tech",
+    "port": "5432",
+    "sslmode": "require"
+}
 
-    // Only trigger on Column A (skip header)
-    if (col !== 1 || row === 1) return;
+class ScanAttendance(BaseModel):
+    badge_no: str
+    attendance_type: str
+    check_in_time: str | None = None
+    check_out_time: str | None = None
+    remarks: str | None = None
 
-    const badgeNo = e.range.getValue().toString().trim();
-    if (!badgeNo || badgeNo.startsWith("❌") || badgeNo.startsWith("⚠️")) return;
+VALID_ATTENDANCE_TYPES = [
+    "Sunday_Satsang", "Wednesday_Satsang", "WeekDay", "WeekNight", "Bhati", "Beas", "Others"
+]
 
-    const attendanceType = sheet.getRange("I1").getValue().toString().trim();
-    const mode = sheet.getRange("H1").getValue().toString().trim();
+def get_db_connection():
+    return psycopg2.connect(**DB_CONFIG)
 
-    if (!attendanceType) {
-      sheet.getRange(row, 2).setValue("⚠️ Set Attendance Type in I1");
-      return;
-    }
-    if (!mode) {
-      sheet.getRange(row, 2).setValue("⚠️ Set Mode in H1");
-      return;
-    }
+# ---------------- Attendance Scan API ----------------
+@router.post("/scan")
+def scan_attendance(data: ScanAttendance):
+    if data.attendance_type not in VALID_ATTENDANCE_TYPES:
+        raise HTTPException(status_code=400, detail="Invalid attendance type")
 
-    const timeStr = new Date().toLocaleTimeString("en-GB", { hour12: false });
+    conn = get_db_connection()
+    cur = conn.cursor()
 
-    // Build payload for API
-    const payload = {
-      badge_no: badgeNo,
-      attendance_type: attendanceType,
-      remarks: null
-    };
-    if (mode === "Check-In") payload.check_in_time = timeStr;
-    if (mode === "Check-Out") payload.check_out_time = timeStr;
+    # Lookup sewadar_id and department_name
+    cur.execute(
+        """
+        SELECT s.sewadar_id, s.name, s.department_id, d.department_name
+        FROM sewadar s
+        JOIN department d ON s.department_id = d.department_id
+        WHERE s.badge_no = %s
+        """,
+        (data.badge_no,)
+    )
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Badge not found")
 
-    Logger.log("Sending payload: " + JSON.stringify(payload));
+    sewadar_id, name, dept_id, dept_name = row
+    today = date.today()
 
-    // Call API
-    const response = UrlFetchApp.fetch(API_URL, {
-      method: "post",
-      contentType: "application/json",
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
+    # ----------------- Check-In Handling -----------------
+    if data.check_in_time:
+        # Prevent duplicate check-in
+        cur.execute(
+            """
+            SELECT id FROM attendance
+            WHERE sewadar_id = %s AND attendance_date = %s AND attendance_type = %s
+            """,
+            (sewadar_id, today, data.attendance_type)
+        )
+        if cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=400, detail="Check-In already recorded for today")
 
-    const status = response.getResponseCode();
-    const result = JSON.parse(response.getContentText() || "{}");
-    Logger.log("API response: " + JSON.stringify(result));
-
-    if (status === 200) {
-      let targetRow = row; // default to current scanned row
-
-      // Handle Check-Out: update existing check-in row
-      if (mode === "Check-Out") {
-        const lastRow = sheet.getLastRow();
-        let foundRow = null;
-
-        for (let r = 2; r <= lastRow; r++) {
-          const val = sheet.getRange(r, 1).getValue().toString().trim();
-          if (val === badgeNo) {
-            foundRow = r;
-            break;
-          }
+        # Insert new row with check-in
+        cur.execute(
+            """
+            INSERT INTO attendance (
+                sewadar_id, attendance_date, attendance_type, check_in_time, remarks
+            ) VALUES (%s, %s, %s, %s, %s)
+            """,
+            (sewadar_id, today, data.attendance_type, data.check_in_time, data.remarks)
+        )
+        conn.commit()
+        conn.close()
+        return {
+            "message": "Check-In recorded",
+            "badge_no": data.badge_no,
+            "name": name,
+            "department_name": dept_name,
+            "check_in_time": data.check_in_time,
+            "check_out_time": None
         }
 
-        if (!foundRow) {
-          // No check-in exists → do not create row, show warning
-          sheet.getRange(row, 2).setValue("❌ No Check-In found");
-          return;
+    # ----------------- Check-Out Handling -----------------
+    if data.check_out_time:
+        # Update existing row with check-out
+        cur.execute(
+            """
+            SELECT id, check_in_time FROM attendance
+            WHERE sewadar_id = %s AND attendance_date = %s AND attendance_type = %s
+            """,
+            (sewadar_id, today, data.attendance_type)
+        )
+        existing = cur.fetchone()
+        if not existing:
+            conn.close()
+            raise HTTPException(status_code=404, detail="No Check-In found for today")
+
+        attendance_id, check_in = existing
+
+        # Prevent duplicate check-out
+        if check_in and data.check_out_time:
+            cur.execute(
+                """
+                SELECT check_out_time FROM attendance
+                WHERE id = %s AND check_out_time IS NOT NULL
+                """,
+                (attendance_id,)
+            )
+            if cur.fetchone():
+                conn.close()
+                raise HTTPException(status_code=400, detail="Check-Out already recorded for today")
+
+        # Update the same row with check-out
+        cur.execute(
+            """
+            UPDATE attendance
+            SET check_out_time = %s
+            WHERE id = %s
+            """,
+            (data.check_out_time, attendance_id)
+        )
+        conn.commit()
+        conn.close()
+        return {
+            "message": "Check-Out recorded",
+            "badge_no": data.badge_no,
+            "name": name,
+            "department_name": dept_name,
+            "check_in_time": check_in,
+            "check_out_time": data.check_out_time
         }
 
-        targetRow = foundRow;
-
-        // Clear badge_no from the current scan row only
-        if (row !== targetRow) {
-          sheet.getRange(row, 1).setValue("");
-        }
-      }
-
-      // Fill Name, Department, Timestamp
-      sheet.getRange(targetRow, 2).setValue(result.name || "Recorded");
-      sheet.getRange(targetRow, 3).setValue(result.department_name || "");
-      sheet.getRange(targetRow, 4).setValue(new Date());
-
-      // Fill Check-In / Check-Out
-      if (result.check_in_time) sheet.getRange(targetRow, 5).setValue(result.check_in_time);
-      if (result.check_out_time) sheet.getRange(targetRow, 6).setValue(result.check_o_
+    # If neither check-in nor check-out is provided
+    conn.close()
+    raise HTTPException(status_code=400, detail="No check-in or check-out time provided")
