@@ -61,7 +61,7 @@ def scan_attendance(data: ScanAttendance):
         # Prevent duplicate check-in
         cur.execute(
             """
-            SELECT id FROM attendance
+            SELECT attendance_id FROM attendance
             WHERE sewadar_id = %s AND attendance_date = %s AND attendance_type = %s
             """,
             (sewadar_id, today, data.attendance_type)
