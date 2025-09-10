@@ -43,7 +43,7 @@ def scan_attendance(data: ScanAttendance):
         """
         SELECT s.sewadar_id, s.name, s.department_id, d.department_name
         FROM sewadar s
-        JOIN department d ON s.department_id = d.id
+        JOIN department d ON s.department_id = d.department_id
         WHERE s.badge_no = %s
         """,
         (data.badge_no,)
