@@ -1,37 +1,3 @@
-# app/crud/attendance.py
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from datetime import date
-import psycopg2
-
-router = APIRouter()
-
-DB_CONFIG = {
-    "dbname": "ams",
-    "user": "neondb_owner",
-    "password": "npg_igo8fBOT3MtP",
-    "host": "ep-orange-fog-a1qfrxr9-pooler.ap-southeast-1.aws.neon.tech",
-    "port": "5432",
-    "sslmode": "require"
-}
-
-class ScanAttendance(BaseModel):
-    badge_no: str
-    attendance_type: str
-    check_in_time: str | None = None
-    check_out_time: str | None = None
-    remarks: str | None = None
-
-VALID_ATTENDANCE_TYPES = [
-    "Sunday_Satsang", "Wednesday_Satsang", "WeekDay", "WeekNight", "Bhati", "Beas", "Others"
-]
-
-JATHA_TYPES = ["Bhati", "Beas", "Others"]
-
-def get_db_connection():
-    return psycopg2.connect(**DB_CONFIG)
-
-
 @router.post("/scan")
 def scan_attendance(data: ScanAttendance):
     if data.attendance_type not in VALID_ATTENDANCE_TYPES:
@@ -56,57 +22,73 @@ def scan_attendance(data: ScanAttendance):
         raise HTTPException(status_code=404, detail="Badge not found")
 
     sewadar_id, name, dept_id, dept_name = row
-    today = date.today()
 
-    # ----------------- Jatha Type Handling -----------------
+    # ----------------- Jatha Type Handling with Date Range -----------------
     if data.attendance_type in JATHA_TYPES:
-        fixed_check_in = "07:00:00"
-        fixed_check_out = "19:00:00"
+        if not hasattr(data, "start_date") or not hasattr(data, "end_date"):
+            conn.close()
+            raise HTTPException(status_code=400, detail="Start and end dates required for Jatha types")
 
-        # Check if row already exists
-        cur.execute(
-            """
-            SELECT attendance_id FROM attendance
-            WHERE sewadar_id = %s AND attendance_date = %s AND attendance_type = %s
-            """,
-            (sewadar_id, today, data.attendance_type)
-        )
-        existing = cur.fetchone()
+        from datetime import datetime, timedelta
 
-        if existing:
-            attendance_id = existing[0]
+        start_date = datetime.strptime(data.start_date, "%Y-%m-%d").date()
+        end_date = datetime.strptime(data.end_date, "%Y-%m-%d").date()
+        delta = (end_date - start_date).days + 1
+
+        inserted_dates = []
+        for i in range(delta):
+            attendance_date = start_date + timedelta(days=i)
+            fixed_check_in = "07:00:00"
+            fixed_check_out = "19:00:00"
+
+            # Check if row already exists
             cur.execute(
                 """
-                UPDATE attendance
-                SET check_in_time=%s, check_out_time=%s, remarks=%s
-                WHERE attendance_id=%s
+                SELECT attendance_id FROM attendance
+                WHERE sewadar_id=%s AND attendance_date=%s AND attendance_type=%s
                 """,
-                (fixed_check_in, fixed_check_out, data.remarks, attendance_id)
+                (sewadar_id, attendance_date, data.attendance_type)
             )
-        else:
-            cur.execute(
-                """
-                INSERT INTO attendance (
-                    sewadar_id, attendance_date, attendance_type, check_in_time, check_out_time, remarks
-                ) VALUES (%s, %s, %s, %s, %s, %s)
-                """,
-                (sewadar_id, today, data.attendance_type, fixed_check_in, fixed_check_out, data.remarks)
-            )
+            existing = cur.fetchone()
+
+            if existing:
+                attendance_id = existing[0]
+                cur.execute(
+                    """
+                    UPDATE attendance
+                    SET check_in_time=%s, check_out_time=%s, remarks=%s
+                    WHERE attendance_id=%s
+                    """,
+                    (fixed_check_in, fixed_check_out, data.remarks, attendance_id)
+                )
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO attendance (
+                        sewadar_id, attendance_date, attendance_type, check_in_time, check_out_time, remarks
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (sewadar_id, attendance_date, data.attendance_type, fixed_check_in, fixed_check_out, data.remarks)
+                )
+            inserted_dates.append(attendance_date.isoformat())
+
         conn.commit()
         conn.close()
         return {
-            "message": f"{data.attendance_type} attendance recorded",
+            "message": f"{data.attendance_type} attendance recorded for {len(inserted_dates)} day(s)",
             "badge_no": data.badge_no,
             "name": name,
             "department_name": dept_name,
-            "check_in_time": fixed_check_in,
-            "check_out_time": fixed_check_out
+            "check_in_time": "07:00:00",
+            "check_out_time": "19:00:00",
+            "dates": inserted_dates
         }
 
     # ----------------- Normal Attendance Handling -----------------
+    today = date.today()
+
     # Check-In
     if data.check_in_time:
-        # Prevent duplicate check-in
         cur.execute(
             """
             SELECT attendance_id FROM attendance
@@ -139,7 +121,6 @@ def scan_attendance(data: ScanAttendance):
 
     # Check-Out
     if data.check_out_time:
-        # Find existing check-in
         cur.execute(
             """
             SELECT attendance_id, check_in_time, check_out_time
@@ -158,7 +139,6 @@ def scan_attendance(data: ScanAttendance):
             conn.close()
             raise HTTPException(status_code=400, detail="❌ Already checked out today!")
 
-        # Update check-out
         cur.execute(
             """
             UPDATE attendance
