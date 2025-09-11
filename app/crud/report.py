@@ -31,7 +31,7 @@ def get_attendance_report(
     # Get all sewadaars and their departments
     cur.execute("""
         SELECT s.sewadar_id, s.badge_no, s.name, d.department_name
-        FROM sewadaar s
+        FROM sewadar s
         JOIN department d ON s.department_id = d.department_id
     """)
     sewadaars = cur.fetchall()
