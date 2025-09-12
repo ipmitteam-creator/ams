@@ -1,5 +1,5 @@
 # app/crud/add_update_sewadar.py
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response, Body
 from pydantic import BaseModel
 from typing import Optional
 import psycopg2
