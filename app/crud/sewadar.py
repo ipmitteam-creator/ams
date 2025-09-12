@@ -145,6 +145,63 @@ def get_sewadar(badge_no: str):
 
     return record
 
+
+
+# ---------------- Update Sewadar ----------------
+
+@router.put("/{badge_no}")
+def update_sewadar(
+    badge_no: str,
+    sewadar_update: Sewadar = Body(...)
+):
+    conn = get_db_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+    # Fetch existing record
+    cursor.execute("SELECT * FROM sewadar WHERE badge_no = %s", (badge_no,))
+    existing = cursor.fetchone()
+    if not existing:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Sewadar with badge_no {badge_no} not found")
+
+    # Merge existing data with updates (skip None values)
+    update_data = existing.copy()
+    for key, value in sewadar_update.dict().items():
+        if value is not None:  # Only update provided fields
+            update_data[key] = value
+
+    # Handle department name → department_id conversion
+    dept_id = get_department_id(conn, update_data.get("department_name"))
+    update_data["department_id"] = dept_id if dept_id else existing.get("department_id")
+
+    # Recalculate age if dob changed
+    update_data["age"] = calculate_age_from_dob(update_data.get("dob"))
+
+    # Build the SQL dynamically
+    fields = [
+        "name", "father_husband_name", "contact_no", "alternate_contact_no", "address",
+        "gender", "dob", "department_id", "enrolment_date", "blood_group", "locality",
+        "badge_category", "badge_issue_date", "initiation_date", "visit_badge_no",
+        "education", "occupation", "photo", "aadhaar_photo", "aadhaar_no", "category", "age"
+    ]
+    set_clause = ", ".join([f"{f} = %({f})s" for f in fields])
+
+    sql = f"""
+        UPDATE sewadar
+        SET {set_clause}
+        WHERE badge_no = %(badge_no)s
+    """
+
+    update_data["badge_no"] = badge_no
+    cursor.execute(sql, update_data)
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+    return {"message": f"Sewadar with badge_no {badge_no} updated successfully"}
+
+
 # ---------------- Search / Report Sewadars ----------------
 @router.get("/")
 def search_sewadars(
