@@ -202,10 +202,10 @@ def update_sewadar(
     return {"message": f"Sewadar with badge_no {badge_no} updated successfully"}
 
 
-# ---------------- Search / Report Sewadars ----------------
 @router.get("/")
 def search_sewadars(
     department_name: Optional[str] = Query(None),
+    current_department_name: Optional[str] = Query(None, description="Filter by current department name"),
     locality: Optional[str] = Query(None),
     gender: Optional[str] = Query(None),
     badge_no: Optional[str] = Query(None),
@@ -213,17 +213,17 @@ def search_sewadars(
     category: Optional[str] = Query(None),
     age: Optional[int] = Query(None),
     format: Optional[str] = Query("json"),
-    columns: Optional[str] = Query(None, description="Comma-separated columns to return (e.g., name,badge_no,gender)")
+    columns: Optional[str] = Query(None, description="Comma-separated columns to return (e.g., name,badge_no,current_department_name)")
 ):
-    # --- Allowed columns ---
+    # --- Allowed columns (now includes current_department_name) ---
     ALLOWED_COLUMNS = {
         "sewadar_id","name","father_husband_name","contact_no","alternate_contact_no","address",
-        "gender","dob","department_name","enrolment_date","blood_group","locality",
+        "gender","dob","department_name","current_department_name","enrolment_date","blood_group","locality",
         "badge_no","badge_category","badge_issue_date","initiation_date","visit_badge_no",
-        "education","occupation","photo","aadhaar_photo","aadhaar_no","category","age","current_department_name"
+        "education","occupation","photo","aadhaar_photo","aadhaar_no","category","age"
     }
 
-    # --- Parse and validate columns ---
+    # --- Parse and validate requested columns ---
     if columns:
         requested_columns = {c.strip() for c in columns.split(",")}
         invalid = requested_columns - ALLOWED_COLUMNS
@@ -239,7 +239,7 @@ def search_sewadars(
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-    # Build filters
+    # --- Build filters ---
     conditions, values = [], []
     if department_name:
         dept_id = get_department_id(conn, department_name)
@@ -249,6 +249,7 @@ def search_sewadars(
         else:
             conn.close()
             return []
+
     if current_department_name:
         cur_dept_id = get_department_id(conn, current_department_name)
         if cur_dept_id:
@@ -257,21 +258,27 @@ def search_sewadars(
         else:
             conn.close()
             return []
+
     if locality:
         conditions.append("locality ILIKE %s")
         values.append(f"%{locality}%")
+
     if gender:
         conditions.append("gender = %s")
         values.append(gender)
+
     if badge_no:
         conditions.append("badge_no = %s")
         values.append(badge_no)
+
     if badge_category:
         conditions.append("badge_category = %s")
         values.append(badge_category)
+
     if category:
         conditions.append("category = %s")
         values.append(category)
+
     if age is not None:
         today = date.today()
         dob_cutoff = today.replace(year=today.year - age)
@@ -283,19 +290,17 @@ def search_sewadars(
     cursor.execute(query, tuple(values))
     records = cursor.fetchall()
 
-    # Replace department_id with department_name
+    # --- Replace department_id and current_department_id with names ---
     for r in records:
         r["department_name"] = get_department_name(conn, r.get("department_id"))
-        r.pop("department_id", None)
-    
-    for r in records:
         r["current_department_name"] = get_department_name(conn, r.get("current_department_id"))
+        r.pop("department_id", None)
         r.pop("current_department_id", None)
 
     cursor.close()
     conn.close()
 
-    # Filter requested columns
+    # --- Filter requested columns ---
     filtered_records = [
         {col: r.get(col) for col in selected_columns if col in r} for r in records
     ]
@@ -304,6 +309,7 @@ def search_sewadars(
         return filtered_records
 
     df = pd.DataFrame(filtered_records)
+
     if format == "csv":
         output = io.StringIO()
         df.to_csv(output, index=False)
@@ -312,6 +318,7 @@ def search_sewadars(
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=sewadar_report.csv"}
         )
+
     if format == "xlsx":
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
