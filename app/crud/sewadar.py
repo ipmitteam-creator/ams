@@ -220,7 +220,7 @@ def search_sewadars(
         "sewadar_id","name","father_husband_name","contact_no","alternate_contact_no","address",
         "gender","dob","department_name","enrolment_date","blood_group","locality",
         "badge_no","badge_category","badge_issue_date","initiation_date","visit_badge_no",
-        "education","occupation","photo","aadhaar_photo","aadhaar_no","category","age"
+        "education","occupation","photo","aadhaar_photo","aadhaar_no","category","age","current_department_name"
     }
 
     # --- Parse and validate columns ---
@@ -246,6 +246,14 @@ def search_sewadars(
         if dept_id:
             conditions.append("department_id = %s")
             values.append(dept_id)
+        else:
+            conn.close()
+            return []
+    if current_department_name:
+        cur_dept_id = get_department_id(conn, current_department_name)
+        if cur_dept_id:
+            conditions.append("current_department_id = %s")
+            values.append(cur_dept_id)
         else:
             conn.close()
             return []
@@ -279,6 +287,10 @@ def search_sewadars(
     for r in records:
         r["department_name"] = get_department_name(conn, r.get("department_id"))
         r.pop("department_id", None)
+    
+    for r in records:
+        r["current_department_name"] = get_department_name(conn, r.get("current_department_id"))
+        r.pop("current_department_id", None)
 
     cursor.close()
     conn.close()
