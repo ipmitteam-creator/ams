@@ -212,17 +212,35 @@ def search_sewadars(
     badge_category: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     age: Optional[int] = Query(None),
-    format: Optional[str] = Query("json")
+    format: Optional[str] = Query("json"),
+    columns: Optional[str] = Query(None, description="Comma-separated columns to return (e.g., name,badge_no,gender)")
 ):
+    # --- Allowed columns ---
+    ALLOWED_COLUMNS = {
+        "sewadar_id","name","father_husband_name","contact_no","alternate_contact_no","address",
+        "gender","dob","department_name","enrolment_date","blood_group","locality",
+        "badge_no","badge_category","badge_issue_date","initiation_date","visit_badge_no",
+        "education","occupation","photo","aadhaar_photo","aadhaar_no","category","age"
+    }
+
+    # --- Parse and validate columns ---
+    if columns:
+        requested_columns = {c.strip() for c in columns.split(",")}
+        invalid = requested_columns - ALLOWED_COLUMNS
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid column(s): {', '.join(invalid)}. Allowed: {', '.join(ALLOWED_COLUMNS)}"
+            )
+        selected_columns = requested_columns
+    else:
+        selected_columns = ALLOWED_COLUMNS
+
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-    print(f"[INFO] Search params: dept={department_name}, locality={locality}, gender={gender}, "
-          f"badge_no={badge_no}, badge_cat={badge_category}, category={category}, age={age}, format={format}")
-
-    # Build dynamic filters
+    # Build filters
     conditions, values = [], []
-
     if department_name:
         dept_id = get_department_id(conn, department_name)
         if dept_id:
@@ -230,29 +248,22 @@ def search_sewadars(
             values.append(dept_id)
         else:
             conn.close()
-            print(f"[WARN] Department '{department_name}' not found, returning empty result")
             return []
-
     if locality:
         conditions.append("locality ILIKE %s")
         values.append(f"%{locality}%")
-
     if gender:
         conditions.append("gender = %s")
         values.append(gender)
-
     if badge_no:
         conditions.append("badge_no = %s")
         values.append(badge_no)
-
     if badge_category:
         conditions.append("badge_category = %s")
         values.append(badge_category)
-
     if category:
         conditions.append("category = %s")
         values.append(category)
-
     if age is not None:
         today = date.today()
         dob_cutoff = today.replace(year=today.year - age)
@@ -261,7 +272,6 @@ def search_sewadars(
 
     where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     query = f"SELECT * FROM sewadar {where_clause}"
-    print(f"[DEBUG] Executing query: {query} with values {values}")
     cursor.execute(query, tuple(values))
     records = cursor.fetchall()
 
@@ -273,16 +283,16 @@ def search_sewadars(
     cursor.close()
     conn.close()
 
-    print(f"[INFO] Found {len(records)} records")
+    # Filter requested columns
+    filtered_records = [
+        {col: r.get(col) for col in selected_columns if col in r} for r in records
+    ]
 
-    # Export in desired format
     if format == "json":
-        return records
+        return filtered_records
 
-    df = pd.DataFrame(records)
-
+    df = pd.DataFrame(filtered_records)
     if format == "csv":
-        print("[INFO] Returning CSV export")
         output = io.StringIO()
         df.to_csv(output, index=False)
         return Response(
@@ -290,9 +300,7 @@ def search_sewadars(
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=sewadar_report.csv"}
         )
-
     if format == "xlsx":
-        print("[INFO] Returning XLSX export")
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Sewadars")
@@ -302,5 +310,4 @@ def search_sewadars(
             headers={"Content-Disposition": "attachment; filename=sewadar_report.xlsx"}
         )
 
-    print(f"[ERROR] Invalid format requested: {format}")
     raise HTTPException(status_code=400, detail="Invalid format. Use json, csv, or xlsx.")
