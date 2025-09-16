@@ -150,10 +150,7 @@ def get_sewadar(badge_no: str):
 # ---------------- Update Sewadar ----------------
 
 @router.put("/{badge_no}")
-def update_sewadar(
-    badge_no: str,
-    sewadar_update: Sewadar = Body(...)
-):
+def update_sewadar(badge_no: str, sewadar_update: Sewadar = Body(...)):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -165,11 +162,11 @@ def update_sewadar(
         conn.close()
         raise HTTPException(status_code=404, detail=f"Sewadar with badge_no {badge_no} not found")
 
-    # Merge existing data with updates (skip None values)
+    # Merge existing data with updates
     update_data = existing.copy()
-    for key, value in sewadar_update.dict().items():
-        if value is not None:  # Only update provided fields
-            update_data[key] = value
+    for key, value in sewadar_update.dict(exclude_unset=True).items():
+        # Explicitly set to None if provided as null
+        update_data[key] = value
 
     # Handle department name → department_id conversion
     dept_id = get_department_id(conn, update_data.get("department_name"))
@@ -178,7 +175,7 @@ def update_sewadar(
     # Recalculate age if dob changed
     update_data["age"] = calculate_age_from_dob(update_data.get("dob"))
 
-    # Build the SQL dynamically
+    # Build SQL dynamically
     fields = [
         "name", "father_husband_name", "contact_no", "alternate_contact_no", "address",
         "gender", "dob", "department_id", "enrolment_date", "blood_group", "locality",
@@ -187,19 +184,16 @@ def update_sewadar(
     ]
     set_clause = ", ".join([f"{f} = %({f})s" for f in fields])
 
-    sql = f"""
-        UPDATE sewadar
-        SET {set_clause}
-        WHERE badge_no = %(badge_no)s
-    """
+    sql = f"""UPDATE sewadar SET {set_clause} WHERE badge_no = %(badge_no)s"""
 
     update_data["badge_no"] = badge_no
     cursor.execute(sql, update_data)
     conn.commit()
+
     cursor.close()
     conn.close()
-
     return {"message": f"Sewadar with badge_no {badge_no} updated successfully"}
+
 
 
 @router.get("/")
