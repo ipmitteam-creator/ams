@@ -165,7 +165,12 @@ def bulk_attendance(payload: BulkAttendance):
 
     for rec in payload.records:
         try:
-            # Reuse scan logic by calling /scan equivalent inline
+            # Validate attendance type
+            if rec.attendance_type not in VALID_ATTENDANCE_TYPES:
+                results.append({"badge_no": rec.badge_no, "status": "❌ Invalid attendance type"})
+                continue
+
+            # Fetch sewadar info
             cur.execute("""
                 SELECT s.sewadar_id, s.name, s.department_id, d.department_name
                 FROM sewadar s
@@ -178,22 +183,82 @@ def bulk_attendance(payload: BulkAttendance):
                 continue
 
             sewadar_id, name, dept_id, dept_name = row
+
+            # Handle Jatha types
+            if rec.attendance_type in JATHA_TYPES:
+                if not rec.start_date or not rec.end_date:
+                    results.append({"badge_no": rec.badge_no,
+                                    "status": "❌ Start and end dates required for Jatha types"})
+                    continue
+
+                start_date = datetime.strptime(rec.start_date, "%Y-%m-%d").date()
+                end_date = datetime.strptime(rec.end_date, "%Y-%m-%d").date()
+                if end_date < start_date:
+                    results.append({"badge_no": rec.badge_no, "status": "❌ End date cannot be before start date"})
+                    continue
+
+                inserted_dates = []
+                fixed_check_in, fixed_check_out = "07:00:00", "19:00:00"
+                for n in range((end_date - start_date).days + 1):
+                    attendance_date = start_date + timedelta(days=n)
+                    # Check if already exists
+                    cur.execute("""
+                        SELECT attendance_id FROM attendance
+                        WHERE sewadar_id=%s AND attendance_date=%s AND attendance_type=%s
+                    """, (sewadar_id, attendance_date, rec.attendance_type))
+                    existing = cur.fetchone()
+                    if existing:
+                        cur.execute("""
+                            UPDATE attendance
+                            SET check_in_time=%s, check_out_time=%s, remarks=%s
+                            WHERE attendance_id=%s
+                        """, (fixed_check_in, fixed_check_out, rec.remarks, existing[0]))
+                    else:
+                        cur.execute("""
+                            INSERT INTO attendance (sewadar_id, attendance_date, attendance_type,
+                                check_in_time, check_out_time, remarks)
+                            VALUES (%s, %s, %s, %s, %s, %s)
+                        """, (sewadar_id, attendance_date, rec.attendance_type,
+                              fixed_check_in, fixed_check_out, rec.remarks))
+                    inserted_dates.append(attendance_date.isoformat())
+
+                results.append({
+                    "badge_no": rec.badge_no,
+                    "name": name,
+                    "department_name": dept_name,
+                    "attendance_type": rec.attendance_type,
+                    "check_in_time": fixed_check_in,
+                    "check_out_time": fixed_check_out,
+                    "dates": inserted_dates,
+                    "status": "✅ Jatha recorded"
+                })
+                continue  # Skip normal check-in/out logic
+
+            # Non-Jatha types (today only)
             today = date.today()
 
+            # Check-In
             if rec.check_in_time:
                 cur.execute("""
                     SELECT attendance_id FROM attendance
                     WHERE sewadar_id=%s AND attendance_date=%s AND attendance_type=%s
                 """, (sewadar_id, today, rec.attendance_type))
                 if cur.fetchone():
-                    results.append({"badge_no": rec.badge_no, "status": "⚠ Already checked in"})
+                    results.append({"badge_no": rec.badge_no, "name": name,
+                                    "department_name": dept_name,
+                                    "status": "⚠ Already checked in"})
                     continue
                 cur.execute("""
                     INSERT INTO attendance (sewadar_id, attendance_date, attendance_type, check_in_time, remarks)
                     VALUES (%s, %s, %s, %s, %s)
                 """, (sewadar_id, today, rec.attendance_type, rec.check_in_time, rec.remarks))
-                results.append({"badge_no": rec.badge_no, "status": "✅ Check-In", "name": name})
+                results.append({"badge_no": rec.badge_no, "name": name,
+                                "department_name": dept_name,
+                                "check_in_time": rec.check_in_time,
+                                "check_out_time": None,
+                                "status": "✅ Check-In"})
 
+            # Check-Out
             elif rec.check_out_time:
                 cur.execute("""
                     SELECT attendance_id, check_in_time, check_out_time
@@ -202,15 +267,24 @@ def bulk_attendance(payload: BulkAttendance):
                 """, (sewadar_id, today, rec.attendance_type))
                 existing = cur.fetchone()
                 if not existing:
-                    results.append({"badge_no": rec.badge_no, "status": "❌ No Check-In"})
+                    results.append({"badge_no": rec.badge_no, "name": name,
+                                    "department_name": dept_name,
+                                    "status": "❌ No Check-In"})
                     continue
                 attendance_id, check_in, existing_out = existing
                 if existing_out:
-                    results.append({"badge_no": rec.badge_no, "status": "⚠ Already checked out"})
+                    results.append({"badge_no": rec.badge_no, "name": name,
+                                    "department_name": dept_name,
+                                    "status": "⚠ Already checked out"})
                     continue
                 cur.execute("UPDATE attendance SET check_out_time=%s WHERE attendance_id=%s",
                             (rec.check_out_time, attendance_id))
-                results.append({"badge_no": rec.badge_no, "status": "✅ Check-Out", "name": name})
+                results.append({"badge_no": rec.badge_no, "name": name,
+                                "department_name": dept_name,
+                                "check_in_time": check_in,
+                                "check_out_time": rec.check_out_time,
+                                "status": "✅ Check-Out"})
+
         except Exception as ex:
             results.append({"badge_no": rec.badge_no, "status": f"❌ Error: {ex}"})
 
