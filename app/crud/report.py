@@ -116,11 +116,12 @@ def get_jatha_report(
     badge_no: str = Query(None, description="Badge number filter (optional)")
 ):
     """
-    Generate Jatha attendance report:
+    Generic Jatha attendance report:
     - Only includes people who actually attended (Beas, Bhati, Others)
     - Each day is a separate row
-    - Columns: Badge Number, Duty Type (J), Date of Seva, Name
-    - Sorted by Date, then Badge Number
+    - Columns: Badge Number, Duty Type (J), Date of Seva, Name, Attendance Type
+    - Sorted by attendance_date then badge_no
+    - Frontends or Apps Script can handle grouping into sheets/tabs
     """
 
     valid_jatha_types = ["Beas", "Bhati", "Others"]
@@ -158,22 +159,19 @@ def get_jatha_report(
     if not rows:
         return {"report": []}
 
-    # Build report with attendance_date as date object
+    # Build report as list of dicts
     report = []
     for badge, name, attendance_date, a_type in rows:
         report.append({
             "badge_no": badge,
             "duty_type": "J",
-            "attendance_date": attendance_date,  # keep as date for sorting
-            "name": name
+            "date_of_seva": attendance_date.strftime("%d/%m/%Y"),
+            "name": name,
+            "attendance_type": a_type
         })
 
-    # Sort by attendance_date then badge_no
-    report.sort(key=lambda x: (x["attendance_date"], x["badge_no"]))
-
-    # Format date as DD/MM/YYYY for final output
-    for row in report:
-        row["date_of_seva"] = row.pop("attendance_date").strftime("%d/%m/%Y")
+    # Sort by date then badge_no
+    report.sort(key=lambda x: (attendance_date, x["badge_no"]))
 
     return {
         "start_date": start_date.strftime("%d/%m/%Y"),
