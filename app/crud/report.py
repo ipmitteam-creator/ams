@@ -1,115 +1,11 @@
+import psycopg2
+from datetime import date, timedelta
+from io import BytesIO
 from fastapi import APIRouter, Query, HTTPException
 from fastapi.responses import StreamingResponse
-from datetime import date
-from io import BytesIO
 from openpyxl import Workbook
-from app.db import get_db_connection
 
 router = APIRouter()
-
-@router.get("/report/jatha")
-def get_jatha_report(
-    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
-    end_date: date = Query(None, description="End date (YYYY-MM-DD). Defaults to start_date if not provided"),
-    department: str = Query(None, description="Department name filter (optional)"),
-    badge_no: str = Query(None, description="Badge number filter (optional)"),
-    format: str = Query("json", description="Response format: json or xlsx")
-):
-    """
-    Generic Jatha attendance report:
-    - Only includes people who actually attended (Beas, Bhati, Others)
-    - Each day is a separate row
-    - Columns: Badge Number, Duty Type (J), Date of Seva, Name, Attendance Type
-    - Sorted by attendance_date then badge_no
-    - Frontends or Apps Script can handle grouping into sheets/tabs
-    - Supports JSON (default) or XLSX via ?format=xlsx
-    """
-
-    valid_jatha_types = ["Beas", "Bhati", "Others"]
-
-    if not end_date:
-        end_date = start_date
-
-    if end_date < start_date:
-        raise HTTPException(status_code=400, detail="end_date cannot be before start_date.")
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    # Fetch attendance records joined with sewadar info
-    query = """
-        SELECT s.badge_no, s.name, a.attendance_date, a.attendance_type
-        FROM attendance a
-        JOIN sewadar s ON a.sewadar_id = s.sewadar_id
-        JOIN department d ON s.department_id = d.department_id
-        WHERE a.attendance_date BETWEEN %s AND %s
-        AND a.attendance_type IN %s
-    """
-    params = [start_date, end_date, tuple(valid_jatha_types)]
-    if department:
-        query += " AND d.department_name = %s"
-        params.append(department)
-    if badge_no:
-        query += " AND s.badge_no = %s"
-        params.append(badge_no)
-
-    cur.execute(query, tuple(params))
-    rows = cur.fetchall()
-    conn.close()
-
-    if not rows:
-        if format.lower() == "xlsx":
-            # Return empty workbook
-            wb = Workbook()
-            wb.remove(wb.active)
-            stream = BytesIO()
-            wb.save(stream)
-            stream.seek(0)
-            return StreamingResponse(stream, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                     headers={"Content-Disposition": f'attachment; filename="Jatha_Report_{start_date}_{end_date}.xlsx"'})
-        else:
-            return {"start_date": start_date.strftime("%d/%m/%Y"),
-                    "end_date": end_date.strftime("%d/%m/%Y"),
-                    "sheets": {t: [] for t in valid_jatha_types}}
-
-    # Build grouped report by attendance_type
-    grouped = {t: [] for t in valid_jatha_types}
-    for badge, name, attendance_date, a_type in rows:
-        grouped[a_type].append({
-            "badge_no": badge,
-            "duty_type": "J",
-            "date_of_seva": attendance_date.strftime("%d/%m/%Y"),
-            "name": name
-        })
-
-    # Sort each array by date then badge_no
-    for a_type in grouped:
-        grouped[a_type].sort(key=lambda x: (x["date_of_seva"], x["badge_no"]))
-
-    if format.lower() == "xlsx":
-        # Create XLSX workbook
-        wb = Workbook()
-        wb.remove(wb.active)  # Remove default sheet
-
-        for sheet_name, data in grouped.items():
-            ws = wb.create_sheet(sheet_name)
-            ws.append(["Badge Number", "Duty Type", "Date of Seva DD/MM/YYYY", "Name of Sewadar"])
-            for row in data:
-                ws.append([row["badge_no"], row["duty_type"], row["date_of_seva"], row["name"]])
-
-        stream = BytesIO()
-        wb.save(stream)
-        stream.seek(0)
-        filename = f"Jatha_Report_{start_date.strftime('%d-%m-%Y')}_{end_date.strftime('%d-%m-%Y')}.xlsx"
-        headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
-        return StreamingResponse(stream, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers=headers)
-
-    # Default JSON response
-    return {
-        "start_date": start_date.strftime("%d/%m/%Y"),
-        "end_date": end_date.strftime("%d/%m/%Y"),
-        "sheets": grouped
-    }
 
 DB_CONFIG = {
     "dbname": "ams",
@@ -123,6 +19,110 @@ DB_CONFIG = {
 def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
 
+
+@router.get("/report/jatha")
+def get_jatha_report(
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: date = Query(None, description="End date (YYYY-MM-DD). Defaults to start_date if not provided"),
+    department: str = Query(None, description="Department name filter (optional)"),
+    badge_no: str = Query(None, description="Badge number filter (optional)"),
+    format: str = Query("json", description="Response format: json or xlsx")
+):
+    valid_jatha_types = ["Beas", "Bhati", "Others"]
+
+    if not end_date:
+        end_date = start_date
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end_date cannot be before start_date.")
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # SQL query
+    query = """
+        SELECT s.badge_no, s.name, a.attendance_date, a.attendance_type
+        FROM attendance a
+        JOIN sewadar s ON a.sewadar_id = s.sewadar_id
+        JOIN department d ON s.department_id = d.department_id
+        WHERE a.attendance_date BETWEEN %s AND %s
+        AND a.attendance_type = ANY(%s)
+    """
+    params = [start_date, end_date, valid_jatha_types]
+    if department:
+        query += " AND d.department_name = %s"
+        params.append(department)
+    if badge_no:
+        query += " AND s.badge_no = %s"
+        params.append(badge_no)
+
+    cur.execute(query, tuple(params))
+    rows = cur.fetchall()
+    conn.close()
+
+    # Empty data handling
+    if not rows:
+        if format.lower() == "xlsx":
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "NoData"
+            stream = BytesIO()
+            wb.save(stream)
+            stream.seek(0)
+            filename = f"Jatha_Report_{start_date.strftime('%d-%m-%Y')}_{end_date.strftime('%d-%m-%Y')}.xlsx"
+            return StreamingResponse(
+                stream,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+        else:
+            return {
+                "start_date": start_date.strftime("%d/%m/%Y"),
+                "end_date": end_date.strftime("%d/%m/%Y"),
+                "sheets": {t: [] for t in valid_jatha_types}
+            }
+
+    # Build grouped report
+    grouped = {t: [] for t in valid_jatha_types}
+    for badge, name, attendance_date, a_type in rows:
+        grouped[a_type].append({
+            "badge_no": badge,
+            "duty_type": "J",
+            "date_of_seva": attendance_date.strftime("%d/%m/%Y"),
+            "name": name
+        })
+
+    # Sort each group
+    for a_type in grouped:
+        grouped[a_type].sort(key=lambda x: (x["date_of_seva"], x["badge_no"]))
+
+    # XLSX output
+    if format.lower() == "xlsx":
+        wb = Workbook()
+        wb.remove(wb.active)
+        for sheet_name, data in grouped.items():
+            ws = wb.create_sheet(sheet_name)
+            ws.append(["Badge Number", "Duty Type", "Date of Seva DD/MM/YYYY", "Name of Sewadar"])
+            for row in data:
+                ws.append([row["badge_no"], row["duty_type"], row["date_of_seva"], row["name"]])
+
+        stream = BytesIO()
+        wb.save(stream)
+        stream.seek(0)
+        filename = f"Jatha_Report_{start_date.strftime('%d-%m-%Y')}_{end_date.strftime('%d-%m-%Y')}.xlsx"
+        return StreamingResponse(
+            stream,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
+    # Default JSON response
+    return {
+        "start_date": start_date.strftime("%d/%m/%Y"),
+        "end_date": end_date.strftime("%d/%m/%Y"),
+        "sheets": grouped
+    }
+
+
 @router.get("/report")
 def get_attendance_report(
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
@@ -131,20 +131,13 @@ def get_attendance_report(
     department: str = Query(None, description="Department name filter (optional)"),
     badge_no: str = Query(None, description="Badge number filter (optional)")
 ):
-    """
-    Generate attendance report:
-    1. For a date or range of dates.
-    2. Filter by department (optional).
-    3. Filter by badge_no (optional).
-    4. Filter by attendance_type (optional).
-    """
     if not end_date:
         end_date = start_date
 
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # Get all sewadaars and their departments
+    # Get all sewadaars
     base_query = """
         SELECT s.sewadar_id, s.badge_no, s.name, d.department_name
         FROM sewadar s
@@ -158,7 +151,6 @@ def get_attendance_report(
     if badge_no:
         filters.append("s.badge_no = %s")
         params.append(badge_no)
-
     if filters:
         base_query += " WHERE " + " AND ".join(filters)
 
@@ -168,7 +160,7 @@ def get_attendance_report(
         conn.close()
         raise HTTPException(status_code=404, detail="No sewadaars found for given filters.")
 
-    # Get attendance records for the date range and optional filters
+    # Get attendance records
     attendance_query = """
         SELECT sewadar_id, attendance_date, attendance_type
         FROM attendance
@@ -183,10 +175,10 @@ def get_attendance_report(
     attendance_records = cur.fetchall()
     conn.close()
 
-    # Build a lookup: {(sewadar_id, attendance_date): attendance_type}
+    # Build lookup
     attendance_lookup = {(r[0], r[1]): r[2] for r in attendance_records}
 
-    # Build the report
+    # Build report
     report = []
     day_count = (end_date - start_date).days + 1
     for offset in range(day_count):
