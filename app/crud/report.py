@@ -107,3 +107,76 @@ def get_attendance_report(
         "badge_filter": badge_no or "All",
         "report": report
     }
+
+@router.get("/report/jatha")
+def get_jatha_report(
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: date = Query(None, description="End date (YYYY-MM-DD). Defaults to start_date if not provided"),
+    department: str = Query(None, description="Department name filter (optional)"),
+    badge_no: str = Query(None, description="Badge number filter (optional)")
+):
+    """
+    Generate Jatha attendance report:
+    - Only includes people who actually attended (Beas, Bhati, Others)
+    - Each day is a separate row
+    - Columns: Badge Number, Duty Type (J), Date of Seva, Name
+    - Sorted by Date, then Badge Number
+    """
+
+    valid_jatha_types = ["Beas", "Bhati", "Others"]
+
+    if not end_date:
+        end_date = start_date
+
+    if end_date < start_date:
+        raise HTTPException(status_code=400, detail="end_date cannot be before start_date.")
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    # Fetch attendance records joined with sewadar info
+    query = """
+        SELECT s.badge_no, s.name, a.attendance_date, a.attendance_type
+        FROM attendance a
+        JOIN sewadar s ON a.sewadar_id = s.sewadar_id
+        JOIN department d ON s.department_id = d.department_id
+        WHERE a.attendance_date BETWEEN %s AND %s
+        AND a.attendance_type IN %s
+    """
+    params = [start_date, end_date, tuple(valid_jatha_types)]
+    if department:
+        query += " AND d.department_name = %s"
+        params.append(department)
+    if badge_no:
+        query += " AND s.badge_no = %s"
+        params.append(badge_no)
+
+    cur.execute(query, tuple(params))
+    rows = cur.fetchall()
+    conn.close()
+
+    if not rows:
+        return {"report": []}
+
+    # Build report with attendance_date as date object
+    report = []
+    for badge, name, attendance_date, a_type in rows:
+        report.append({
+            "badge_no": badge,
+            "duty_type": "J",
+            "attendance_date": attendance_date,  # keep as date for sorting
+            "name": name
+        })
+
+    # Sort by attendance_date then badge_no
+    report.sort(key=lambda x: (x["attendance_date"], x["badge_no"]))
+
+    # Format date as DD/MM/YYYY for final output
+    for row in report:
+        row["date_of_seva"] = row.pop("attendance_date").strftime("%d/%m/%Y")
+
+    return {
+        "start_date": start_date.strftime("%d/%m/%Y"),
+        "end_date": end_date.strftime("%d/%m/%Y"),
+        "report": report
+    }
