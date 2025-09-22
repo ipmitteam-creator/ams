@@ -1,4 +1,3 @@
-# app/crud/attendance.py
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import date, datetime, timedelta
@@ -38,7 +37,7 @@ class ScanAttendance(BaseModel):
 class BulkAttendance(BaseModel):
     records: List[ScanAttendance]
 
-# ----------------- Existing /scan endpoint (unchanged) -----------------
+# ----------------- /scan endpoint -----------------
 @router.post("/scan")
 def scan_attendance(data: ScanAttendance):
     if data.attendance_type not in VALID_ATTENDANCE_TYPES:
@@ -46,10 +45,11 @@ def scan_attendance(data: ScanAttendance):
 
     conn = get_db_connection()
     cur = conn.cursor()
+    # Use current_department_id and current_department_name
     cur.execute("""
-        SELECT s.sewadar_id, s.name, s.department_id, d.department_name
+        SELECT s.sewadar_id, s.name, s.current_department_id, d.department_name AS current_department_name
         FROM sewadar s
-        JOIN department d ON s.department_id = d.department_id
+        JOIN department d ON s.current_department_id = d.department_id
         WHERE s.badge_no = %s
     """, (data.badge_no,))
     row = cur.fetchone()
@@ -59,7 +59,6 @@ def scan_attendance(data: ScanAttendance):
 
     sewadar_id, name, dept_id, dept_name = row
 
-    # --- Jatha types ---
     if data.attendance_type in JATHA_TYPES:
         if not data.start_date or not data.end_date:
             conn.close()
@@ -103,7 +102,7 @@ def scan_attendance(data: ScanAttendance):
             "message": f"{data.attendance_type} attendance recorded for {len(inserted_dates)} day(s)",
             "badge_no": data.badge_no,
             "name": name,
-            "department_name": dept_name,
+            "current_department_name": dept_name,
             "check_in_time": fixed_check_in,
             "check_out_time": fixed_check_out,
             "dates": inserted_dates
@@ -127,7 +126,7 @@ def scan_attendance(data: ScanAttendance):
         conn.commit()
         conn.close()
         return {"message": "Check-In recorded", "badge_no": data.badge_no,
-                "name": name, "department_name": dept_name,
+                "name": name, "current_department_name": dept_name,
                 "check_in_time": data.check_in_time, "check_out_time": None}
 
     # --- Check-Out ---
@@ -150,13 +149,14 @@ def scan_attendance(data: ScanAttendance):
         conn.commit()
         conn.close()
         return {"message": "Check-Out recorded", "badge_no": data.badge_no,
-                "name": name, "department_name": dept_name,
+                "name": name, "current_department_name": dept_name,
                 "check_in_time": check_in, "check_out_time": data.check_out_time}
 
     conn.close()
     raise HTTPException(status_code=400, detail="No check-in or check-out time provided")
 
-# ----------------- NEW: Bulk Attendance Endpoint -----------------
+
+# ----------------- Bulk Attendance -----------------
 @router.post("/bulk")
 def bulk_attendance(payload: BulkAttendance):
     results = []
@@ -165,16 +165,14 @@ def bulk_attendance(payload: BulkAttendance):
 
     for rec in payload.records:
         try:
-            # Validate attendance type
             if rec.attendance_type not in VALID_ATTENDANCE_TYPES:
                 results.append({"badge_no": rec.badge_no, "status": "❌ Invalid attendance type"})
                 continue
 
-            # Fetch sewadar info
             cur.execute("""
-                SELECT s.sewadar_id, s.name, s.department_id, d.department_name
+                SELECT s.sewadar_id, s.name, s.current_department_id, d.department_name AS current_department_name
                 FROM sewadar s
-                JOIN department d ON s.department_id = d.department_id
+                JOIN department d ON s.current_department_id = d.department_id
                 WHERE s.badge_no = %s
             """, (rec.badge_no,))
             row = cur.fetchone()
@@ -184,7 +182,6 @@ def bulk_attendance(payload: BulkAttendance):
 
             sewadar_id, name, dept_id, dept_name = row
 
-            # Handle Jatha types
             if rec.attendance_type in JATHA_TYPES:
                 if not rec.start_date or not rec.end_date:
                     results.append({"badge_no": rec.badge_no,
@@ -201,7 +198,6 @@ def bulk_attendance(payload: BulkAttendance):
                 fixed_check_in, fixed_check_out = "07:00:00", "19:00:00"
                 for n in range((end_date - start_date).days + 1):
                     attendance_date = start_date + timedelta(days=n)
-                    # Check if already exists
                     cur.execute("""
                         SELECT attendance_id FROM attendance
                         WHERE sewadar_id=%s AND attendance_date=%s AND attendance_type=%s
@@ -225,19 +221,17 @@ def bulk_attendance(payload: BulkAttendance):
                 results.append({
                     "badge_no": rec.badge_no,
                     "name": name,
-                    "department_name": dept_name,
+                    "current_department_name": dept_name,
                     "attendance_type": rec.attendance_type,
                     "check_in_time": fixed_check_in,
                     "check_out_time": fixed_check_out,
                     "dates": inserted_dates,
                     "status": "✅ Jatha recorded"
                 })
-                continue  # Skip normal check-in/out logic
+                continue
 
-            # Non-Jatha types (today only)
             today = date.today()
 
-            # Check-In
             if rec.check_in_time:
                 cur.execute("""
                     SELECT attendance_id FROM attendance
@@ -245,7 +239,7 @@ def bulk_attendance(payload: BulkAttendance):
                 """, (sewadar_id, today, rec.attendance_type))
                 if cur.fetchone():
                     results.append({"badge_no": rec.badge_no, "name": name,
-                                    "department_name": dept_name,
+                                    "current_department_name": dept_name,
                                     "status": "⚠ Already checked in"})
                     continue
                 cur.execute("""
@@ -253,12 +247,11 @@ def bulk_attendance(payload: BulkAttendance):
                     VALUES (%s, %s, %s, %s, %s)
                 """, (sewadar_id, today, rec.attendance_type, rec.check_in_time, rec.remarks))
                 results.append({"badge_no": rec.badge_no, "name": name,
-                                "department_name": dept_name,
+                                "current_department_name": dept_name,
                                 "check_in_time": rec.check_in_time,
                                 "check_out_time": None,
                                 "status": "✅ Check-In"})
 
-            # Check-Out
             elif rec.check_out_time:
                 cur.execute("""
                     SELECT attendance_id, check_in_time, check_out_time
@@ -268,19 +261,19 @@ def bulk_attendance(payload: BulkAttendance):
                 existing = cur.fetchone()
                 if not existing:
                     results.append({"badge_no": rec.badge_no, "name": name,
-                                    "department_name": dept_name,
+                                    "current_department_name": dept_name,
                                     "status": "❌ No Check-In"})
                     continue
                 attendance_id, check_in, existing_out = existing
                 if existing_out:
                     results.append({"badge_no": rec.badge_no, "name": name,
-                                    "department_name": dept_name,
+                                    "current_department_name": dept_name,
                                     "status": "⚠ Already checked out"})
                     continue
                 cur.execute("UPDATE attendance SET check_out_time=%s WHERE attendance_id=%s",
                             (rec.check_out_time, attendance_id))
                 results.append({"badge_no": rec.badge_no, "name": name,
-                                "department_name": dept_name,
+                                "current_department_name": dept_name,
                                 "check_in_time": check_in,
                                 "check_out_time": rec.check_out_time,
                                 "status": "✅ Check-Out"})

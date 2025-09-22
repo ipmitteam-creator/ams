@@ -19,12 +19,12 @@ DB_CONFIG = {
 def get_db_connection():
     return psycopg2.connect(**DB_CONFIG)
 
-
+# === JATHA REPORT ===
 @router.get("/report/jatha")
 def get_jatha_report(
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: date = Query(None, description="End date (YYYY-MM-DD). Defaults to start_date if not provided"),
-    department: str = Query(None, description="Department name filter (optional)"),
+    department: str = Query(None, description="Working department filter (optional)"),
     badge_no: str = Query(None, description="Badge number filter (optional)"),
     format: str = Query("json", description="Response format: json or xlsx")
 ):
@@ -38,12 +38,11 @@ def get_jatha_report(
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # SQL query
     query = """
         SELECT s.badge_no, s.name, a.attendance_date, a.attendance_type
         FROM attendance a
         JOIN sewadar s ON a.sewadar_id = s.sewadar_id
-        JOIN department d ON s.department_id = d.department_id
+        JOIN department d ON s.current_department_id = d.department_id
         WHERE a.attendance_date BETWEEN %s AND %s
         AND a.attendance_type = ANY(%s)
     """
@@ -59,7 +58,6 @@ def get_jatha_report(
     rows = cur.fetchall()
     conn.close()
 
-    # Empty data handling
     if not rows:
         if format.lower() == "xlsx":
             wb = Workbook()
@@ -69,10 +67,9 @@ def get_jatha_report(
             wb.save(stream)
             stream.seek(0)
             filename = f"Jatha_Report_{start_date.strftime('%d-%m-%Y')}_{end_date.strftime('%d-%m-%Y')}.xlsx"
-            return StreamingResponse(
-                stream,
+            return StreamingResponse(stream,
                 media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+                headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'}
             )
         else:
             return {
@@ -81,7 +78,6 @@ def get_jatha_report(
                 "sheets": {t: [] for t in valid_jatha_types}
             }
 
-    # Build grouped report
     grouped = {t: [] for t in valid_jatha_types}
     for badge, name, attendance_date, a_type in rows:
         grouped[a_type].append({
@@ -91,11 +87,9 @@ def get_jatha_report(
             "name": name
         })
 
-    # Sort each group
     for a_type in grouped:
         grouped[a_type].sort(key=lambda x: (x["date_of_seva"], x["badge_no"]))
 
-    # XLSX output
     if format.lower() == "xlsx":
         wb = Workbook()
         wb.remove(wb.active)
@@ -104,31 +98,28 @@ def get_jatha_report(
             ws.append(["Badge Number", "Duty Type", "Date of Seva DD/MM/YYYY", "Name of Sewadar"])
             for row in data:
                 ws.append([row["badge_no"], row["duty_type"], row["date_of_seva"], row["name"]])
-
         stream = BytesIO()
         wb.save(stream)
         stream.seek(0)
         filename = f"Jatha_Report_{start_date.strftime('%d-%m-%Y')}_{end_date.strftime('%d-%m-%Y')}.xlsx"
-        return StreamingResponse(
-            stream,
+        return StreamingResponse(stream,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            headers={"Content-Disposition": f'attachment; filename=\"{filename}\"'}
         )
 
-    # Default JSON response
     return {
         "start_date": start_date.strftime("%d/%m/%Y"),
         "end_date": end_date.strftime("%d/%m/%Y"),
         "sheets": grouped
     }
 
-
+# === ATTENDANCE REPORT ===
 @router.get("/report")
 def get_attendance_report(
     start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
     end_date: date = Query(None, description="End date (YYYY-MM-DD). Defaults to start_date if not provided"),
     attendance_type: str = Query(None, description="Attendance type filter (optional)"),
-    department: str = Query(None, description="Department name filter (optional)"),
+    department: str = Query(None, description="Working department filter (optional)"),
     badge_no: str = Query(None, description="Badge number filter (optional)")
 ):
     if not end_date:
@@ -137,11 +128,10 @@ def get_attendance_report(
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # Get all sewadaars
     base_query = """
-        SELECT s.sewadar_id, s.badge_no, s.name, d.department_name
+        SELECT s.sewadar_id, s.badge_no, s.name, d.department_name AS current_department_name
         FROM sewadar s
-        JOIN department d ON s.department_id = d.department_id
+        JOIN department d ON s.current_department_id = d.department_id
     """
     filters = []
     params = []
@@ -160,7 +150,6 @@ def get_attendance_report(
         conn.close()
         raise HTTPException(status_code=404, detail="No sewadaars found for given filters.")
 
-    # Get attendance records
     attendance_query = """
         SELECT sewadar_id, attendance_date, attendance_type
         FROM attendance
@@ -175,10 +164,8 @@ def get_attendance_report(
     attendance_records = cur.fetchall()
     conn.close()
 
-    # Build lookup
     attendance_lookup = {(r[0], r[1]): r[2] for r in attendance_records}
 
-    # Build report
     report = []
     day_count = (end_date - start_date).days + 1
     for offset in range(day_count):
@@ -194,7 +181,7 @@ def get_attendance_report(
                 "date": str(day),
                 "name": name,
                 "badge_no": badge,
-                "department": dept_name,
+                "current_department_name": dept_name,
                 "status": status
             })
 
