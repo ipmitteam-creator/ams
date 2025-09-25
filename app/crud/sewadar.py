@@ -17,6 +17,7 @@ class Sewadar(BaseModel):
     contact_no: Optional[str] = None
     alternate_contact_no: Optional[str] = None
     address: Optional[str] = None
+    permanent_address: Optional[str] = None   # 👈 NEW
     gender: Optional[str] = None
     dob: Optional[str] = None
     department_name: Optional[str] = None
@@ -92,14 +93,14 @@ def add_sewadar(sewadar: Sewadar):
 
     sql = """
         INSERT INTO sewadar (
-            name, father_husband_name, contact_no, alternate_contact_no, address,
+            name, father_husband_name, contact_no, alternate_contact_no, address, permanent_address,
             gender, dob, department_id, current_department_id, enrolment_date,
             blood_group, locality, badge_no, badge_category, badge_issue_date,
             initiation_date, visit_badge_no, education, occupation, photo,
             aadhaar_photo, aadhaar_no, category, age, updated_by
         )
         VALUES (
-            %(name)s, %(father_husband_name)s, %(contact_no)s, %(alternate_contact_no)s, %(address)s,
+            %(name)s, %(father_husband_name)s, %(contact_no)s, %(alternate_contact_no)s, %(address)s, %(permanent_address)s,
             %(gender)s, %(dob)s, %(department_id)s, %(current_department_id)s, %(enrolment_date)s,
             %(blood_group)s, %(locality)s, %(badge_no)s, %(badge_category)s, %(badge_issue_date)s,
             %(initiation_date)s, %(visit_badge_no)s, %(education)s, %(occupation)s, %(photo)s,
@@ -143,7 +144,7 @@ def update_sewadar(badge_no: str, sewadar_update: Sewadar):
     update_data["age"] = calculate_age_from_dob(update_data.get("dob"))
 
     fields = [
-        "name","father_husband_name","contact_no","alternate_contact_no","address",
+        "name","father_husband_name","contact_no","alternate_contact_no","address","permanent_address",  # 👈 added
         "gender","dob","department_id","current_department_id","enrolment_date",
         "blood_group","locality","badge_category","badge_issue_date","initiation_date",
         "visit_badge_no","education","occupation","photo","aadhaar_photo",
@@ -195,7 +196,7 @@ def search_sewadars(
     columns: Optional[str] = Query(None)
 ):
     ALLOWED_COLUMNS = {
-        "sewadar_id","name","father_husband_name","contact_no","alternate_contact_no","address",
+        "sewadar_id","name","father_husband_name","contact_no","alternate_contact_no","address","permanent_address",  # 👈 added
         "gender","dob","department_name","current_department_name","enrolment_date","blood_group",
         "locality","badge_no","badge_category","badge_issue_date","initiation_date",
         "visit_badge_no","education","occupation","photo","aadhaar_photo","aadhaar_no",
