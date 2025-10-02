@@ -1,5 +1,5 @@
 # app/crud/add_update_sewadar.py
-from fastapi import APIRouter, HTTPException, Query, Response, Body
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 from typing import Optional
 import psycopg2
@@ -17,7 +17,7 @@ class Sewadar(BaseModel):
     contact_no: Optional[str] = None
     alternate_contact_no: Optional[str] = None
     address: Optional[str] = None
-    permanent_address: Optional[str] = None   # 👈 NEW
+    permanent_address: Optional[str] = None
     gender: Optional[str] = None
     dob: Optional[str] = None
     department_name: Optional[str] = None
@@ -50,6 +50,13 @@ def get_db_connection():
     )
 
 # ---------------- Utilities ----------------
+def normalize_strings(data: dict) -> dict:
+    """Strip + lowercase all string values in a dict."""
+    for k, v in data.items():
+        if isinstance(v, str):
+            data[k] = v.strip().lower()
+    return data
+
 def get_department_id(conn, department_name: Optional[str]) -> Optional[int]:
     if not department_name:
         return None
@@ -87,9 +94,11 @@ def add_sewadar(sewadar: Sewadar):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    dept_id = get_department_id(conn, sewadar.department_name)
-    current_dept_id = get_department_id(conn, sewadar.current_department_name)
-    age = calculate_age_from_dob(sewadar.dob)
+    data = normalize_strings(sewadar.dict())
+
+    dept_id = get_department_id(conn, data.get("department_name"))
+    current_dept_id = get_department_id(conn, data.get("current_department_name"))
+    age = calculate_age_from_dob(data.get("dob"))
 
     sql = """
         INSERT INTO sewadar (
@@ -106,10 +115,9 @@ def add_sewadar(sewadar: Sewadar):
             %(initiation_date)s, %(visit_badge_no)s, %(education)s, %(occupation)s, %(photo)s,
             %(aadhaar_photo)s, %(aadhaar_no)s, %(category)s, %(age)s, %(updated_by)s
         )
-        ON CONFLICT (badge_no) DO NOTHING
+        ON CONFLICT ((LOWER(badge_no))) DO NOTHING
     """
 
-    data = sewadar.dict()
     data["department_id"] = dept_id
     data["current_department_id"] = current_dept_id
     data["age"] = age
@@ -119,7 +127,7 @@ def add_sewadar(sewadar: Sewadar):
     cursor.close()
     conn.close()
 
-    return {"message": f"Sewadar {sewadar.name} added successfully"}
+    return {"message": f"Sewadar {data['name']} added successfully"}
 
 # ---------------- Update Sewadar ----------------
 @router.put("/{badge_no}")
@@ -127,7 +135,7 @@ def update_sewadar(badge_no: str, sewadar_update: Sewadar):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-    cursor.execute("SELECT * FROM sewadar WHERE badge_no = %s", (badge_no,))
+    cursor.execute("SELECT * FROM sewadar WHERE LOWER(badge_no) = LOWER(%s)", (badge_no,))
     existing = cursor.fetchone()
     if not existing:
         conn.close()
@@ -137,6 +145,8 @@ def update_sewadar(badge_no: str, sewadar_update: Sewadar):
     for key, value in sewadar_update.dict(exclude_unset=True).items():
         update_data[key] = value
 
+    update_data = normalize_strings(update_data)
+
     dept_id = get_department_id(conn, update_data.get("department_name"))
     current_dept_id = get_department_id(conn, update_data.get("current_department_name"))
     update_data["department_id"] = dept_id if dept_id else existing.get("department_id")
@@ -144,14 +154,14 @@ def update_sewadar(badge_no: str, sewadar_update: Sewadar):
     update_data["age"] = calculate_age_from_dob(update_data.get("dob"))
 
     fields = [
-        "name","father_husband_name","contact_no","alternate_contact_no","address","permanent_address",  # 👈 added
+        "name","father_husband_name","contact_no","alternate_contact_no","address","permanent_address",
         "gender","dob","department_id","current_department_id","enrolment_date",
         "blood_group","locality","badge_category","badge_issue_date","initiation_date",
         "visit_badge_no","education","occupation","photo","aadhaar_photo",
         "aadhaar_no","category","age","updated_by"
     ]
     set_clause = ", ".join([f"{f} = %({f})s" for f in fields])
-    sql = f"UPDATE sewadar SET {set_clause} WHERE badge_no = %(badge_no)s"
+    sql = f"UPDATE sewadar SET {set_clause} WHERE LOWER(badge_no) = LOWER(%(badge_no)s)"
 
     update_data["badge_no"] = badge_no
     cursor.execute(sql, update_data)
@@ -167,7 +177,7 @@ def get_sewadar(badge_no: str):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-    cursor.execute("SELECT * FROM sewadar WHERE badge_no = %s", (badge_no,))
+    cursor.execute("SELECT * FROM sewadar WHERE LOWER(badge_no) = LOWER(%s)", (badge_no,))
     record = cursor.fetchone()
     if not record:
         conn.close()
@@ -196,7 +206,7 @@ def search_sewadars(
     columns: Optional[str] = Query(None)
 ):
     ALLOWED_COLUMNS = {
-        "sewadar_id","name","father_husband_name","contact_no","alternate_contact_no","address","permanent_address",  # 👈 added
+        "sewadar_id","name","father_husband_name","contact_no","alternate_contact_no","address","permanent_address",
         "gender","dob","department_name","current_department_name","enrolment_date","blood_group",
         "locality","badge_no","badge_category","badge_issue_date","initiation_date",
         "visit_badge_no","education","occupation","photo","aadhaar_photo","aadhaar_no",
@@ -204,36 +214,36 @@ def search_sewadars(
     }
 
     if columns:
-        requested_columns = {c.strip() for c in columns.split(",")}
-        invalid = requested_columns - ALLOWED_COLUMNS
+        requested_columns = {c.strip().lower() for c in columns.split(",")}
+        invalid = requested_columns - {c.lower() for c in ALLOWED_COLUMNS}
         if invalid:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid column(s): {', '.join(invalid)}. Allowed: {', '.join(ALLOWED_COLUMNS)}"
             )
-        selected_columns = requested_columns
+        selected_columns = [c for c in ALLOWED_COLUMNS if c.lower() in requested_columns]
     else:
-        selected_columns = ALLOWED_COLUMNS
+        selected_columns = list(ALLOWED_COLUMNS)
 
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
 
     conditions, values = [], []
     if department_name:
-        dept_id = get_department_id(conn, department_name)
+        dept_id = get_department_id(conn, department_name.strip().lower())
         if dept_id: conditions.append("department_id = %s"); values.append(dept_id)
         else: conn.close(); return []
 
     if current_department_name:
-        cur_dept_id = get_department_id(conn, current_department_name)
+        cur_dept_id = get_department_id(conn, current_department_name.strip().lower())
         if cur_dept_id: conditions.append("current_department_id = %s"); values.append(cur_dept_id)
         else: conn.close(); return []
 
     if locality: conditions.append("locality ILIKE %s"); values.append(f"%{locality}%")
-    if gender: conditions.append("gender = %s"); values.append(gender)
-    if badge_no: conditions.append("badge_no = %s"); values.append(badge_no)
-    if badge_category: conditions.append("badge_category = %s"); values.append(badge_category)
-    if category: conditions.append("category = %s"); values.append(category)
+    if gender: conditions.append("LOWER(gender) = LOWER(%s)"); values.append(gender)
+    if badge_no: conditions.append("LOWER(badge_no) = LOWER(%s)"); values.append(badge_no)
+    if badge_category: conditions.append("LOWER(badge_category) = LOWER(%s)"); values.append(badge_category)
+    if category: conditions.append("LOWER(category) = LOWER(%s)"); values.append(category)
     if age is not None:
         today = date.today()
         dob_cutoff = today.replace(year=today.year - age)
