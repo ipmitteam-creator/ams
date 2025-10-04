@@ -42,6 +42,9 @@ class Sewadar(BaseModel):
     department_name: Optional[str] = None
     current_department_name: Optional[str] = None
     enrolment_date: Optional[str] = None
+    enrolment_code: Optional[str] = None     # <-- new
+    short_name: Optional[str] = None        # <-- new
+    age: Optional[int] = None               # <-- new
     blood_group: Optional[str] = None
     locality: Optional[str] = None
     badge_no: str
