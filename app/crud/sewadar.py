@@ -13,16 +13,21 @@ import asyncio
 
 router = APIRouter()
 
+
+
 EMAIL_CONFIG = ConnectionConfig(
     MAIL_USERNAME="ipmitteam@gmail.com",
     MAIL_PASSWORD="rerw quhk jsjw wlpm",
     MAIL_FROM="ipmitteam@gmail.com",
     MAIL_PORT=587,
     MAIL_SERVER="smtp.gmail.com",
-    MAIL_TLS=True,
-    MAIL_SSL=False,
-    USE_CREDENTIALS=True
+    MAIL_FROM_NAME="IPMIT Team",
+    MAIL_STARTTLS=True,   # required
+    MAIL_SSL_TLS=False,   # required
+    USE_CREDENTIALS=True,
+    TEMPLATE_FOLDER="app/email_templates"  # optional, if you use templates
 )
+
 
 # ---------------- Schema Model ----------------
 class Sewadar(BaseModel):
