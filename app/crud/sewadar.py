@@ -159,42 +159,6 @@ def parse_enrolment_date(enrolment_date_str: Optional[str]) -> str:
         return date.today().strftime("%Y-%m-%d")
 
 # ---------------- Add Sewadar ----------------
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from typing import Optional
-import asyncio
-from app.db import get_db_connection
-from app.utils import normalize_strings, calculate_age_from_dob, parse_enrolment_date, generate_enrolment_code, get_department_id, send_new_sewadar_email
-
-router = APIRouter()
-
-class Sewadar(BaseModel):
-    name: str
-    father_husband_name: Optional[str] = None
-    contact_no: Optional[str] = None
-    alternate_contact_no: Optional[str] = None
-    address: Optional[str] = None
-    permanent_address: Optional[str] = None
-    gender: Optional[str] = None
-    dob: Optional[str] = None
-    department_name: Optional[str] = None
-    current_department_name: Optional[str] = None
-    enrolment_date: Optional[str] = None
-    blood_group: Optional[str] = None
-    locality: Optional[str] = None
-    badge_no: Optional[str] = None
-    badge_category: Optional[str] = None
-    badge_issue_date: Optional[str] = None
-    initiation_date: Optional[str] = None
-    visit_badge_no: Optional[str] = None
-    education: Optional[str] = None
-    occupation: Optional[str] = None
-    photo: Optional[str] = None
-    aadhaar_photo: Optional[str] = None
-    aadhaar_no: Optional[str] = None
-    category: Optional[str] = None
-    short_name: Optional[str] = None
-    updated_by: Optional[int] = None
 
 @router.post("/")
 def add_sewadar(sewadar: Sewadar):
