@@ -47,7 +47,7 @@ class Sewadar(BaseModel):
     age: Optional[int] = None               # <-- new
     blood_group: Optional[str] = None
     locality: Optional[str] = None
-    badge_no: str
+    badge_no: Optional[str] = None
     badge_category: Optional[str] = None
     badge_issue_date: Optional[str] = None
     initiation_date: Optional[str] = None
@@ -159,6 +159,43 @@ def parse_enrolment_date(enrolment_date_str: Optional[str]) -> str:
         return date.today().strftime("%Y-%m-%d")
 
 # ---------------- Add Sewadar ----------------
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional
+import asyncio
+from app.db import get_db_connection
+from app.utils import normalize_strings, calculate_age_from_dob, parse_enrolment_date, generate_enrolment_code, get_department_id, send_new_sewadar_email
+
+router = APIRouter()
+
+class Sewadar(BaseModel):
+    name: str
+    father_husband_name: Optional[str] = None
+    contact_no: Optional[str] = None
+    alternate_contact_no: Optional[str] = None
+    address: Optional[str] = None
+    permanent_address: Optional[str] = None
+    gender: Optional[str] = None
+    dob: Optional[str] = None
+    department_name: Optional[str] = None
+    current_department_name: Optional[str] = None
+    enrolment_date: Optional[str] = None
+    blood_group: Optional[str] = None
+    locality: Optional[str] = None
+    badge_no: Optional[str] = None
+    badge_category: Optional[str] = None
+    badge_issue_date: Optional[str] = None
+    initiation_date: Optional[str] = None
+    visit_badge_no: Optional[str] = None
+    education: Optional[str] = None
+    occupation: Optional[str] = None
+    photo: Optional[str] = None
+    aadhaar_photo: Optional[str] = None
+    aadhaar_no: Optional[str] = None
+    category: Optional[str] = None
+    short_name: Optional[str] = None
+    updated_by: Optional[int] = None
+
 @router.post("/")
 def add_sewadar(sewadar: Sewadar):
     conn = get_db_connection()
@@ -167,63 +204,51 @@ def add_sewadar(sewadar: Sewadar):
     data = normalize_strings(sewadar.dict())
 
     # ---------------- Departments ----------------
-    dept_id = get_department_id(conn, data.get("department_name"))
-    current_dept_id = get_department_id(conn, data.get("current_department_name"))
+    data["department_id"] = get_department_id(conn, data.get("department_name"))
+    data["current_department_id"] = get_department_id(conn, data.get("current_department_name"))
 
     # ---------------- Age ----------------
-    age = calculate_age_from_dob(data.get("dob"))
+    data["age"] = calculate_age_from_dob(data.get("dob"))
 
     # ---------------- Enrolment Date & Code ----------------
     data["enrolment_date"] = parse_enrolment_date(data.get("enrolment_date"))
     data["enrolment_code"] = generate_enrolment_code(conn, data.get("gender"))
 
     # ---------------- Short Name ----------------
-    if not data.get("short_name") or data.get("short_name").strip() == "":
-        # Auto-generate short_name
+    if not data.get("short_name"):
         name_parts = data.get("name", "").split()
-        if len(name_parts) == 0:
+        if not name_parts:
             raise HTTPException(status_code=400, detail="Name is required for generating short_name")
-        first_name = name_parts[0]
-        last_name = name_parts[-1] if len(name_parts) > 1 else ""
-        base_short_name = (first_name + last_name[:1]).lower().replace(" ", "")
+        base_short_name = (name_parts[0] + (name_parts[-1][:1] if len(name_parts) > 1 else "")).lower().replace(" ", "")
 
-        # Ensure uniqueness
-        cursor.execute(
-            "SELECT short_name FROM sewadar WHERE short_name ILIKE %s",
-            (base_short_name + "%",)
-        )
+        cursor.execute("SELECT short_name FROM sewadar WHERE short_name ILIKE %s", (base_short_name + "%",))
         existing = [row[0] for row in cursor.fetchall()]
-        if base_short_name not in existing:
-            data["short_name"] = base_short_name
-        else:
-            # Find next available numeric suffix
-            suffix = 2
-            while f"{base_short_name}{suffix}" in existing:
-                suffix += 1
-            data["short_name"] = f"{base_short_name}{suffix}"
+
+        suffix = 1
+        candidate = base_short_name
+        while candidate in existing:
+            suffix += 1
+            candidate = f"{base_short_name}{suffix}"
+        data["short_name"] = candidate
+
+    # ---------------- Handle badge_no ----------------
+    if data.get("badge_category") != "New Enrolment" and not data.get("badge_no"):
+        raise HTTPException(status_code=400, detail="badge_no is required for categories other than 'New Enrolment'")
 
     # ---------------- SQL Insert ----------------
-    sql = """
-        INSERT INTO sewadar (
-            name, father_husband_name, contact_no, alternate_contact_no, address, permanent_address,
-            gender, dob, department_id, current_department_id, enrolment_date, enrolment_code,
-            short_name, blood_group, locality, badge_no, badge_category, badge_issue_date,
-            initiation_date, visit_badge_no, education, occupation, photo,
-            aadhaar_photo, aadhaar_no, category, age, updated_by
-        )
-        VALUES (
-            %(name)s, %(father_husband_name)s, %(contact_no)s, %(alternate_contact_no)s, %(address)s, %(permanent_address)s,
-            %(gender)s, %(dob)s, %(department_id)s, %(current_department_id)s, %(enrolment_date)s, %(enrolment_code)s,
-            %(short_name)s, %(blood_group)s, %(locality)s, %(badge_no)s, %(badge_category)s, %(badge_issue_date)s,
-            %(initiation_date)s, %(visit_badge_no)s, %(education)s, %(occupation)s, %(photo)s,
-            %(aadhaar_photo)s, %(aadhaar_no)s, %(category)s, %(age)s, %(updated_by)s
-        )
+    fields = [
+        "name","father_husband_name","contact_no","alternate_contact_no","address","permanent_address",
+        "gender","dob","department_id","current_department_id","enrolment_date","enrolment_code",
+        "short_name","blood_group","locality","badge_no","badge_category","badge_issue_date",
+        "initiation_date","visit_badge_no","education","occupation","photo","aadhaar_photo",
+        "aadhaar_no","category","age","updated_by"
+    ]
+    set_clause = ", ".join([f"{f} = %({f})s" for f in fields])
+    sql = f"""
+        INSERT INTO sewadar ({', '.join(fields)})
+        VALUES ({', '.join([f"%({f})s" for f in fields])})
         ON CONFLICT ((LOWER(badge_no))) DO NOTHING
     """
-
-    data["department_id"] = dept_id
-    data["current_department_id"] = current_dept_id
-    data["age"] = age
 
     cursor.execute(sql, data)
     conn.commit()
@@ -231,16 +256,15 @@ def add_sewadar(sewadar: Sewadar):
     conn.close()
 
     # ---------------- Send Email ----------------
-    if data.get("contact_no"):  # or you can have email field in Sewadar model
-        # Example: send email to admin or secretary
+    if data.get("contact_no"):
         asyncio.create_task(send_new_sewadar_email("kaushambiit@gmail.com", data["name"], data["enrolment_code"]))
-
 
     return {
         "message": f"Sewadar {data['name']} added successfully",
         "enrolment_code": data["enrolment_code"],
         "enrolment_date": data["enrolment_date"],
-        "short_name": data["short_name"]
+        "short_name": data["short_name"],
+        "badge_no": data.get("badge_no")  # may be None for New Enrolment
     }
 
 # ---------------- Update Sewadar ----------------
