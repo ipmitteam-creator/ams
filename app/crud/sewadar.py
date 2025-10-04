@@ -161,7 +161,7 @@ def parse_enrolment_date(enrolment_date_str: Optional[str]) -> str:
 # ---------------- Add Sewadar ----------------
 
 @router.post("/")
-def add_sewadar(sewadar: Sewadar):
+async def add_sewadar(sewadar: Sewadar):
     conn = get_db_connection()
     cursor = conn.cursor()
 
