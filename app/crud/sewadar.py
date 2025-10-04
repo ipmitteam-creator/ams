@@ -25,7 +25,7 @@ EMAIL_CONFIG = ConnectionConfig(
     MAIL_STARTTLS=True,   # required
     MAIL_SSL_TLS=False,   # required
     USE_CREDENTIALS=True,
-    TEMPLATE_FOLDER="app/email_templates"  # optional, if you use templates
+    #TEMPLATE_FOLDER="app/email_templates"  # optional, if you use templates
 )
 
 
