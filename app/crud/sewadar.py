@@ -196,8 +196,8 @@ def add_sewadar(sewadar: Sewadar):
         data["short_name"] = candidate
 
     # ---------------- Handle badge_no ----------------
-    if data.get("badge_category") != "New Enrolment" and not data.get("badge_no"):
-        raise HTTPException(status_code=400, detail="badge_no is required for categories other than 'New Enrolment'")
+    if data.get("badge_category", "").lower() != "new enrolment" and not data.get("badge_no"):
+     raise HTTPException(status_code=400, detail="badge_no is required for categories other than 'New Enrolment'")
 
     # ---------------- SQL Insert ----------------
     fields = [
